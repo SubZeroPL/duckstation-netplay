@@ -2325,7 +2325,7 @@ bool Netplay::NpOnEventCb(void* ctx, GGPOEvent* ev)
       break;
     case GGPOEventCode::GGPO_EVENTCODE_DESYNC:
       if (!send_desync_notifications)
-        return;
+        return true;
 
       Host::OnNetplayMessage(fmt::format("Desync Detected: Current Frame: {}, Desync Frame: {}, Diff: {}, L:{}, R:{}",
                                          CurrentFrame(), ev->u.desync.nFrameOfDesync,
