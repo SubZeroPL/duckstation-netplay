@@ -966,7 +966,7 @@ void EmuThread::shutdownSystem(bool save_state /* = true */)
     return;
   }
 
-  System::ShutdownSystem(save_state);
+  System::ShutdownSystem(save_state && !Netplay::IsActive());
 }
 
 void EmuThread::resetSystem()

@@ -149,6 +149,8 @@ static void GenerateChecksumForFrame(int* checksum, int frame, unsigned char* bu
 static MemorySettingsInterface s_settings_overlay;
 static SessionState s_state;
 
+static bool send_desync_notifications = true;
+
 /// Enet
 struct Peer
 {
@@ -538,7 +540,8 @@ void Netplay::RequestCloseSession(CloseSessionMessage::Reason reason)
   }
 
   // toss host display, if we were still connecting, this'll be up
-  Host::ReleaseHostDisplay();
+  if (s_state == SessionState::Connecting)
+    Host::ReleaseHostDisplay();
 }
 
 bool Netplay::InitializeEnet()
@@ -797,7 +800,7 @@ void Netplay::CreateGGPOSession()
 
   ggpo_start_session(&s_ggpo, &cb, s_num_players, sizeof(Netplay::Input), MAX_ROLLBACK_FRAMES);
 
-  // if you are the host be sure to add the needed spectators to the session before the players 
+  // if you are the host be sure to add the needed spectators to the session before the players
   // this way we prevent the session finishing to synchronize before adding the spectators.
   if (IsHost())
   {
@@ -1291,7 +1294,7 @@ void Netplay::HandleJoinResponseMessage(s32 player_id, const ENetPacket* pkt)
   s_reset_start_time.Reset();
 }
 
-void Netplay::HandlePreResetMessage(s32 player_id, const ENetPacket* pkt) 
+void Netplay::HandlePreResetMessage(s32 player_id, const ENetPacket* pkt)
 {
   if (player_id != s_host_player_id)
   {
@@ -1334,7 +1337,7 @@ void Netplay::HandlePeerDisconnectionAsNonHost(s32 player_id)
   RequestReset(ResetRequestMessage::Reason::ConnectionLost, player_id);
 }
 
-void Netplay::PreReset() 
+void Netplay::PreReset()
 {
   Assert(IsHost());
 
@@ -1828,7 +1831,7 @@ void Netplay::SetSettings(const ConnectResponseMessage* msg)
   si.SetBoolValue("GPU", "UseSoftwareRendererForReadbacks", true);
 
   // No cheats.. yet. Need to serialize them, and that has security risks.
-  si.SetBoolValue("Main", "AutoLoadCheats", false);
+  // si.SetBoolValue("Main", "AutoLoadCheats", false);
 
   // No PCDRV or texture replacements, they require local files.
   si.SetBoolValue("PCDrv", "Enabled", false);
@@ -1933,6 +1936,11 @@ void Netplay::UpdateThrottlePeriod()
     Common::Timer::ConvertSecondsToValue(1.0 / (static_cast<double>(System::GetThrottleFrequency()) * s_target_speed));
 }
 
+void Netplay::ToggleDesyncNotifications()
+{
+  send_desync_notifications = send_desync_notifications ? false : true;
+}
+
 void Netplay::HandleTimeSyncEvent(float frame_delta, int update_interval)
 {
   // only activate timesync if its worth correcting.
@@ -1941,7 +1949,7 @@ void Netplay::HandleTimeSyncEvent(float frame_delta, int update_interval)
   // Distribute the frame difference over the next N * 0.75 frames.
   // only part of the interval time is used since we want to come back to normal speed.
   // otherwise we will keep spiraling into unplayable gameplay.
-  float total_time = (frame_delta * s_frame_period) / 4;
+  float total_time = (frame_delta * s_frame_period) / 2;
   float mun_timesync_frames = update_interval * 0.75f;
   float added_time_per_frame = -(total_time / mun_timesync_frames);
   float iterations_per_frame = 1.0f / s_frame_period;
@@ -1999,7 +2007,7 @@ void Netplay::GenerateChecksumForFrame(int* checksum, int frame, unsigned char* 
   const u32 sliding_window_size = 4096 * 4; // 4 pages.
   const u32 num_group_of_pages = buffer_size / sliding_window_size;
   const u32 start_position = (frame % num_group_of_pages) * sliding_window_size;
-  *checksum = XXH32(buffer + start_position, sliding_window_size, frame);
+  *checksum = XXH32(buffer + start_position, sliding_window_size, 0);
   // Log_VerbosePrintf("Netplay Checksum: f:%d wf:%d c:%u", frame, frame % num_group_of_pages, *checksum);
 }
 
@@ -2080,8 +2088,9 @@ void Netplay::SendChatMessage(const std::string_view& msg)
 
   auto pkt = NewControlPacket<ChatMessage>(sizeof(ChatMessage) + static_cast<u32>(msg.length()));
   std::memcpy(pkt.pkt->data + sizeof(ChatMessage), msg.data(), msg.length());
-  // TODO: turn chat on for spectators? it's kind of weird to handle. probably has to go through the host and be relayed to the players.
-  SendControlPacketToAll(pkt, false); 
+  // TODO: turn chat on for spectators? it's kind of weird to handle. probably has to go through the host and be relayed
+  // to the players.
+  SendControlPacketToAll(pkt, false);
 
   // add own netplay message locally to netplay messages
   ShowChatMessage(s_player_id, msg);
@@ -2254,10 +2263,10 @@ bool Netplay::NpSaveFrameCb(void* ctx, unsigned char** buffer, int* len, int* ch
   GenerateChecksumForFrame(checksum, frame, state, state_size);
 
 #if 0
-  if (frame > 100 && frame < 150 && s_num_players > 1)
+  if (frame > 200 && frame < 2000 && s_num_players > 1)
   {
     std::string filename =
-      Path::Combine(EmuFolders::Dumps, fmt::format("f{}_c{}_p{}.bin", frame, (u32)*checksum, s_local_handle));
+      Path::Combine(EmuFolders::Dumps, fmt::format("f{}_c{}_p{}.bin", frame + 1, (u32)*checksum, s_local_handle));
     FileSystem::WriteBinaryFile(filename.c_str(), state, state_size);
   }
 
@@ -2315,6 +2324,9 @@ bool Netplay::NpOnEventCb(void* ctx, GGPOEvent* ev)
       HandleTimeSyncEvent(ev->u.timesync.frames_ahead, ev->u.timesync.timeSyncPeriodInFrames);
       break;
     case GGPOEventCode::GGPO_EVENTCODE_DESYNC:
+      if (!send_desync_notifications)
+        return;
+
       Host::OnNetplayMessage(fmt::format("Desync Detected: Current Frame: {}, Desync Frame: {}, Diff: {}, L:{}, R:{}",
                                          CurrentFrame(), ev->u.desync.nFrameOfDesync,
                                          CurrentFrame() - ev->u.desync.nFrameOfDesync, ev->u.desync.ourCheckSum,
