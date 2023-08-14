@@ -1300,7 +1300,7 @@ bool System::BootSystem(SystemBootParameters parameters)
   if (disc)
     CDROM::InsertMedia(std::move(disc), disc_region);
   if (CDROM::HasMedia() && (parameters.override_fast_boot.has_value() ? parameters.override_fast_boot.value() :
-                                                                        g_settings.bios_patch_fast_boot))
+                                                                        g_settings.bios_patch_fast_boot) || true)
   {
     if (s_bios_image_info && s_bios_image_info->patch_compatible)
     {
@@ -1351,7 +1351,7 @@ bool System::BootSystem(SystemBootParameters parameters)
   if (parameters.load_image_to_ram || g_settings.cdrom_load_image_to_ram)
     CDROM::PrecacheMedia();
 
-  if (parameters.fast_forward_to_first_frame)
+  if (parameters.fast_forward_to_first_frame || true)
     FastForwardToFirstFrame();
 
   if (g_settings.audio_dump_on_boot)
