@@ -1,5 +1,5 @@
 # DuckStation - PlayStation 1, aka. PSX Emulator
-[Latest News](#latest-news) | [Features](#features) | [Downloading and Running](#downloading-and-running) | [Building](#building) | [Disclaimers](#disclaimers)
+[Features](#features) | [Downloading and Running](#downloading-and-running) | [Building](#building) | [Disclaimers](#disclaimers)
 
 **Latest Builds for Windows 10/11, Linux (AppImage/Flatpak), and macOS:** https://github.com/stenzek/duckstation/releases/tag/latest
 
@@ -22,7 +22,7 @@ DuckStation features a fully-featured frontend built using Qt, as well as a full
 
 Other features include:
 
- - CPU Recompiler/JIT (x86-64, armv7/AArch32 and AArch64).
+ - CPU Recompiler/JIT (x86-64, armv7/AArch32, AArch64, RISC-V/RV64).
  - Hardware (D3D11, D3D12, OpenGL, Vulkan, Metal) and software rendering.
  - Upscaling, texture filtering, and true colour (24-bit) in hardware renderers.
  - PGXP for geometry precision, texture correction, and depth buffer emulation.
@@ -50,8 +50,8 @@ Other features include:
  - Automatic loading/applying of PPF patches.
 
 ## System Requirements
- - A CPU faster than a potato. But it needs to be x86_64, AArch32/armv7, or AArch64/ARMv8, otherwise you won't get a recompiler and it'll be slow.
- - For the hardware renderers, a GPU capable of OpenGL 3.1/OpenGL ES 3.1/Direct3D 11 Feature Level 10.0 (or Vulkan 1.0) and above. So, basically anything made in the last 10 years or so.
+ - A CPU faster than a potato. But it needs to be x86_64, AArch32/armv7, AArch64/ARMv8, or RISC-V/RV64 otherwise you won't get a recompiler and it'll be slow.
+ - For the hardware renderers, a GPU capable of OpenGL 3.1/OpenGL ES 3.1/Direct3D 11 Feature Level 10.0 (or Vulkan 1.1) and above. So, basically anything made in the last 10 years or so.
  - SDL, XInput or DInput compatible game controller (e.g. XB360/XBOne/XBSeries). DualShock 3 users on Windows will need to install the official DualShock 3 drivers included as part of PlayStation Now.
 
 ## Downloading and running
@@ -145,9 +145,9 @@ Requirements:
 ### Linux
 Requirements (Debian/Ubuntu package names):
  - CMake (`cmake`)
- - SDL2 (at least version 2.28.2) (`libsdl2-dev` `libxrandr-dev`)
+ - SDL2 (at least version 2.28.5) (`libsdl2-dev` `libxrandr-dev`)
  - pkgconfig (`pkg-config`)
- - Qt 6 (at least version 6.5.1) (`qt6-base-dev` `qt6-base-private-dev` `qt6-base-dev-tools` `qt6-tools-dev` `libqt6svg6`)
+ - Qt 6 (at least version 6.5.3) (`qt6-base-dev` `qt6-base-private-dev` `qt6-base-dev-tools` `qt6-tools-dev` `libqt6svg6`)
  - git (`git`) (Note: needed to clone the repository and at build time)
  - When Wayland is enabled (default): (`libwayland-dev` `libwayland-egl-backend-dev` `extra-cmake-modules` `qt6-wayland`)
  - libcurl (`libcurl4-openssl-dev`)
@@ -163,8 +163,8 @@ Requirements (Debian/Ubuntu package names):
 
 Requirements:
  - CMake
- - SDL2 (at least version 2.28.2)
- - Qt 6 (at least version 6.5.1)
+ - SDL2 (at least version 2.28.5)
+ - Qt 6 (at least version 6.5.3)
 
 Optional (recommended for faster builds):
  - Ninja

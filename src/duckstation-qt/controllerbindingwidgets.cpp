@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: (GPL-3.0 OR CC-BY-NC-ND-4.0)
 
 #include "controllerbindingwidgets.h"
-#include "controllersettingsdialog.h"
+#include "controllersettingswindow.h"
 #include "controllersettingwidgetbinder.h"
 #include "qthost.h"
 #include "qtutils.h"
-#include "settingsdialog.h"
+#include "settingswindow.h"
 #include "settingwidgetbinder.h"
 
 #include "core/controller.h"
@@ -28,7 +28,7 @@
 
 Log_SetChannel(ControllerBindingWidget);
 
-ControllerBindingWidget::ControllerBindingWidget(QWidget* parent, ControllerSettingsDialog* dialog, u32 port)
+ControllerBindingWidget::ControllerBindingWidget(QWidget* parent, ControllerSettingsWindow* dialog, u32 port)
   : QWidget(parent), m_dialog(dialog), m_config_section(Controller::GetSettingsSection(port)), m_port_number(port)
 {
   m_ui.setupUi(this);
@@ -344,7 +344,7 @@ ControllerMacroEditWidget::ControllerMacroEditWidget(ControllerMacroWidget* pare
 {
   m_ui.setupUi(this);
 
-  ControllerSettingsDialog* dialog = m_bwidget->getDialog();
+  ControllerSettingsWindow* dialog = m_bwidget->getDialog();
   const std::string& section = m_bwidget->getConfigSection();
   const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_bwidget->getControllerType());
   if (!cinfo)
@@ -448,7 +448,7 @@ void ControllerMacroEditWidget::updateFrequencyText()
 
 void ControllerMacroEditWidget::updateBinds()
 {
-  ControllerSettingsDialog* dialog = m_bwidget->getDialog();
+  ControllerSettingsWindow* dialog = m_bwidget->getDialog();
   const Controller::ControllerInfo* cinfo = Controller::GetControllerInfo(m_bwidget->getControllerType());
   if (!cinfo)
     return;
@@ -733,7 +733,7 @@ ControllerBindingWidget_Base::~ControllerBindingWidget_Base()
 
 QIcon ControllerBindingWidget_Base::getIcon() const
 {
-  return QIcon::fromTheme("BIOSSettings");
+  return QIcon::fromTheme("controller-strike-line");
 }
 
 void ControllerBindingWidget_Base::initBindingWidgets()
@@ -804,7 +804,7 @@ ControllerBindingWidget_DigitalController::~ControllerBindingWidget_DigitalContr
 
 QIcon ControllerBindingWidget_DigitalController::getIcon() const
 {
-  return QIcon::fromTheme(QStringLiteral("gamepad-line"));
+  return QIcon::fromTheme(QStringLiteral("controller-digital-line"));
 }
 
 ControllerBindingWidget_Base* ControllerBindingWidget_DigitalController::createInstance(ControllerBindingWidget* parent)
@@ -827,7 +827,7 @@ ControllerBindingWidget_AnalogController::~ControllerBindingWidget_AnalogControl
 
 QIcon ControllerBindingWidget_AnalogController::getIcon() const
 {
-  return QIcon::fromTheme(QStringLiteral("ControllerSettings"));
+  return QIcon::fromTheme(QStringLiteral("controller-line"));
 }
 
 ControllerBindingWidget_Base* ControllerBindingWidget_AnalogController::createInstance(ControllerBindingWidget* parent)
@@ -850,7 +850,7 @@ ControllerBindingWidget_AnalogJoystick::~ControllerBindingWidget_AnalogJoystick(
 
 QIcon ControllerBindingWidget_AnalogJoystick::getIcon() const
 {
-  return QIcon::fromTheme(QStringLiteral("ControllerSettings"));
+  return QIcon::fromTheme(QStringLiteral("joystick-line"));
 }
 
 ControllerBindingWidget_Base* ControllerBindingWidget_AnalogJoystick::createInstance(ControllerBindingWidget* parent)
@@ -890,7 +890,7 @@ ControllerBindingWidget_NeGcon::~ControllerBindingWidget_NeGcon()
 
 QIcon ControllerBindingWidget_NeGcon::getIcon() const
 {
-  return QIcon::fromTheme(QStringLiteral("steering-line"));
+  return QIcon::fromTheme(QStringLiteral("negcon-line"));
 }
 
 ControllerBindingWidget_Base* ControllerBindingWidget_NeGcon::createInstance(ControllerBindingWidget* parent)
@@ -913,7 +913,7 @@ ControllerBindingWidget_GunCon::~ControllerBindingWidget_GunCon()
 
 QIcon ControllerBindingWidget_GunCon::getIcon() const
 {
-  return QIcon::fromTheme(QStringLiteral("fire-line"));
+  return QIcon::fromTheme(QStringLiteral("guncon-line"));
 }
 
 ControllerBindingWidget_Base* ControllerBindingWidget_GunCon::createInstance(ControllerBindingWidget* parent)

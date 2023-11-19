@@ -75,7 +75,6 @@ struct Settings
   bool start_paused = false;
   bool start_fullscreen = false;
   bool pause_on_focus_loss = false;
-  bool pause_on_menu = true;
   bool save_state_on_exit = true;
   bool create_save_state_backups = DEFAULT_SAVE_STATE_BACKUPS;
   bool compress_save_states = DEFAULT_SAVE_STATE_COMPRESSION;
@@ -151,6 +150,7 @@ struct Settings
   float gpu_pgxp_depth_clear_threshold = DEFAULT_GPU_PGXP_DEPTH_THRESHOLD / GPU_PGXP_DEPTH_THRESHOLD_SCALE;
 
   u8 cdrom_readahead_sectors = DEFAULT_CDROM_READAHEAD_SECTORS;
+  CDROMMechaconVersion cdrom_mechacon_version = DEFAULT_CDROM_MECHACON_VERSION;
   bool cdrom_region_check = false;
   bool cdrom_load_image_to_ram = false;
   bool cdrom_load_image_patches = false;
@@ -254,8 +254,6 @@ struct Settings
   bool log_to_window = false;
   bool log_to_file = false;
 
-  ALWAYS_INLINE bool IsUsingCodeCache() const { return (cpu_execution_mode != CPUExecutionMode::Interpreter); }
-  ALWAYS_INLINE bool IsUsingRecompiler() const { return (cpu_execution_mode == CPUExecutionMode::Recompiler); }
   ALWAYS_INLINE bool IsUsingSoftwareRenderer() const { return (gpu_renderer == GPURenderer::Software); }
   ALWAYS_INLINE bool IsRunaheadEnabled() const { return (runahead_frames > 0); }
 
@@ -273,12 +271,6 @@ struct Settings
   ALWAYS_INLINE void SetPGXPDepthClearThreshold(float value)
   {
     gpu_pgxp_depth_clear_threshold = value / GPU_PGXP_DEPTH_THRESHOLD_SCALE;
-  }
-
-  ALWAYS_INLINE bool IsUsingFastmem() const
-  {
-    return (cpu_fastmem_mode != CPUFastmemMode::Disabled && cpu_execution_mode == CPUExecutionMode::Recompiler &&
-            !cpu_recompiler_memory_exceptions);
   }
 
   ALWAYS_INLINE s32 GetAudioOutputVolume(bool fast_forwarding) const
@@ -413,7 +405,10 @@ struct Settings
   static const char* GetMultitapModeName(MultitapMode mode);
   static const char* GetMultitapModeDisplayName(MultitapMode mode);
 
-  // Default to D3D11 on Windows as it's more performant and at this point, less buggy.
+  static std::optional<CDROMMechaconVersion> ParseCDROMMechVersionName(const char* str);
+  static const char* GetCDROMMechVersionName(CDROMMechaconVersion mode);
+  static const char* GetCDROMMechVersionDisplayName(CDROMMechaconVersion mode);
+
   static constexpr GPURenderer DEFAULT_GPU_RENDERER = GPURenderer::Automatic;
   static constexpr GPUTextureFilter DEFAULT_GPU_TEXTURE_FILTER = GPUTextureFilter::Nearest;
   static constexpr GPUDownsampleMode DEFAULT_GPU_DOWNSAMPLE_MODE = GPUDownsampleMode::Disabled;
@@ -422,7 +417,7 @@ struct Settings
   static constexpr float DEFAULT_GPU_PGXP_DEPTH_THRESHOLD = 300.0f;
   static constexpr float GPU_PGXP_DEPTH_THRESHOLD_SCALE = 4096.0f;
 
-#ifdef ENABLE_RECOMPILER
+#if defined(ENABLE_RECOMPILER)
   static constexpr CPUExecutionMode DEFAULT_CPU_EXECUTION_MODE = CPUExecutionMode::Recompiler;
 
   // LUT still ends up faster on Apple Silicon for now, because of 16K pages.
@@ -431,6 +426,9 @@ struct Settings
 #else
   static constexpr CPUFastmemMode DEFAULT_CPU_FASTMEM_MODE = CPUFastmemMode::LUT;
 #endif
+#elif defined(ENABLE_NEWREC)
+  static constexpr CPUExecutionMode DEFAULT_CPU_EXECUTION_MODE = CPUExecutionMode::NewRec;
+  static constexpr CPUFastmemMode DEFAULT_CPU_FASTMEM_MODE = CPUFastmemMode::MMap;
 #else
   static constexpr CPUExecutionMode DEFAULT_CPU_EXECUTION_MODE = CPUExecutionMode::CachedInterpreter;
   static constexpr CPUFastmemMode DEFAULT_CPU_FASTMEM_MODE = CPUFastmemMode::Disabled;
@@ -453,13 +451,9 @@ struct Settings
   static constexpr float DEFAULT_OSD_SCALE = 100.0f;
 
   static constexpr u8 DEFAULT_CDROM_READAHEAD_SECTORS = 8;
+  static constexpr CDROMMechaconVersion DEFAULT_CDROM_MECHACON_VERSION = CDROMMechaconVersion::VC1A;
 
-#ifndef __ANDROID__
-  // Android still defaults to digital controller for now.
   static constexpr ControllerType DEFAULT_CONTROLLER_1_TYPE = ControllerType::AnalogController;
-#else
-  static constexpr ControllerType DEFAULT_CONTROLLER_1_TYPE = ControllerType::DigitalController;
-#endif
   static constexpr ControllerType DEFAULT_CONTROLLER_2_TYPE = ControllerType::None;
   static constexpr MemoryCardType DEFAULT_MEMORY_CARD_1_TYPE = MemoryCardType::PerGameTitle;
   static constexpr MemoryCardType DEFAULT_MEMORY_CARD_2_TYPE = MemoryCardType::None;

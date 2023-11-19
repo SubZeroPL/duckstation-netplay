@@ -679,7 +679,7 @@ void FullscreenUI::ToggleTheme()
 void FullscreenUI::PauseForMenuOpen(bool set_pause_menu_open)
 {
   s_was_paused_on_quick_menu_open = (System::GetState() == System::State::Paused);
-  if (g_settings.pause_on_menu && !s_was_paused_on_quick_menu_open)
+  if (!s_was_paused_on_quick_menu_open)
     Host::RunOnCPUThread([]() { System::PauseSystem(true); });
 
   s_pause_menu_was_open |= set_pause_menu_open;
@@ -1344,6 +1344,9 @@ std::string FullscreenUI::GetEffectiveStringSetting(SettingsInterface* bsi, cons
 void FullscreenUI::DrawInputBindingButton(SettingsInterface* bsi, InputBindingInfo::Type type, const char* section,
                                           const char* name, const char* display_name, bool show_type)
 {
+  if (type == InputBindingInfo::Type::Pointer)
+    return;
+
   TinyString title;
   title.fmt("{}/{}", section, name);
 
@@ -2719,9 +2722,6 @@ void FullscreenUI::DrawInterfaceSettingsPage()
                     FSUI_CSTR("Pauses the emulator when you minimize the window or switch to another "
                               "application, and unpauses when you switch back."),
                     "Main", "PauseOnFocusLoss", false);
-  DrawToggleSetting(bsi, FSUI_ICONSTR(ICON_FA_WINDOW_MAXIMIZE, "Pause On Menu"),
-                    FSUI_CSTR("Pauses the emulator when you open the quick menu, and unpauses when you close it."),
-                    "Main", "PauseOnMenu", true);
   DrawToggleSetting(
     bsi, FSUI_ICONSTR(ICON_FA_POWER_OFF, "Confirm Power Off"),
     FSUI_CSTR("Determines whether a prompt will be displayed to confirm shutting down the emulator/game "
@@ -3342,7 +3342,7 @@ void FullscreenUI::DrawControllerSettingsPage()
                        });
     }
 
-    if (!ci || ci->bindings.empty() == 0)
+    if (!ci || ci->bindings.empty())
       continue;
 
     if (MenuButton(FSUI_ICONSTR(ICON_FA_MAGIC, "Automatic Mapping"),
@@ -3352,7 +3352,10 @@ void FullscreenUI::DrawControllerSettingsPage()
     }
 
     for (const Controller::ControllerBindingInfo& bi : ci->bindings)
-      DrawInputBindingButton(bsi, bi.type, section.c_str(), bi.name, bi.display_name, true);
+    {
+      DrawInputBindingButton(bsi, bi.type, section.c_str(), bi.name,
+                             Host::TranslateToCString(ci->name, bi.display_name), true);
+    }
 
     if (mtap_enabled[mtap_port])
     {
@@ -3386,7 +3389,7 @@ void FullscreenUI::DrawControllerSettingsPage()
           {
             continue;
           }
-          options.emplace_back(bi.display_name,
+          options.emplace_back(Host::TranslateToString(ci->name, bi.display_name),
                                std::any_of(buttons_split.begin(), buttons_split.end(),
                                            [bi](const std::string_view& it) { return (it == bi.name); }));
         }
@@ -3398,7 +3401,7 @@ void FullscreenUI::DrawControllerSettingsPage()
             std::string_view to_modify;
             for (const Controller::ControllerBindingInfo& bi : ci->bindings)
             {
-              if (bi.display_name == title)
+              if (title == Host::TranslateToStringView(ci->name, bi.display_name))
               {
                 to_modify = bi.name;
                 break;
@@ -3498,24 +3501,24 @@ void FullscreenUI::DrawControllerSettingsPage()
       for (const SettingInfo& si : ci->settings)
       {
         TinyString title;
-        title.fmt(ICON_FA_COG "{}", si.display_name);
+        title.fmt(ICON_FA_COG "{}", Host::TranslateToStringView(ci->name, si.display_name));
+        const char* description = Host::TranslateToCString(ci->name, si.description);
         switch (si.type)
         {
           case SettingInfo::Type::Boolean:
-            DrawToggleSetting(bsi, title, si.description, section.c_str(), si.name, si.BooleanDefaultValue(), true,
-                              false);
+            DrawToggleSetting(bsi, title, description, section.c_str(), si.name, si.BooleanDefaultValue(), true, false);
             break;
           case SettingInfo::Type::Integer:
-            DrawIntRangeSetting(bsi, title, si.description, section.c_str(), si.name, si.IntegerDefaultValue(),
+            DrawIntRangeSetting(bsi, title, description, section.c_str(), si.name, si.IntegerDefaultValue(),
                                 si.IntegerMinValue(), si.IntegerMaxValue(), si.format, true);
             break;
           case SettingInfo::Type::IntegerList:
-            DrawIntListSetting(bsi, title, si.description, section.c_str(), si.name, si.IntegerDefaultValue(),
-                               si.options, 0, false, si.IntegerMinValue(), true, LAYOUT_MENU_BUTTON_HEIGHT,
-                               g_large_font, g_medium_font, ci->name);
+            DrawIntListSetting(bsi, title, description, section.c_str(), si.name, si.IntegerDefaultValue(), si.options,
+                               0, false, si.IntegerMinValue(), true, LAYOUT_MENU_BUTTON_HEIGHT, g_large_font,
+                               g_medium_font, ci->name);
             break;
           case SettingInfo::Type::Float:
-            DrawFloatSpinBoxSetting(bsi, title, si.description, section.c_str(), si.name, si.FloatDefaultValue(),
+            DrawFloatSpinBoxSetting(bsi, title, description, section.c_str(), si.name, si.FloatDefaultValue(),
                                     si.FloatMinValue(), si.FloatMaxValue(), si.FloatStepValue(), si.multiplier,
                                     si.format, true);
             break;
@@ -3535,8 +3538,6 @@ void FullscreenUI::DrawHotkeySettingsPage()
 
   BeginMenuButtons();
 
-  InputManager::GetHotkeyList();
-
   const HotkeyInfo* last_category = nullptr;
   for (const HotkeyInfo* hotkey : s_hotkey_list_cache)
   {
@@ -3546,7 +3547,8 @@ void FullscreenUI::DrawHotkeySettingsPage()
       last_category = hotkey;
     }
 
-    DrawInputBindingButton(bsi, InputBindingInfo::Type::Button, "Hotkeys", hotkey->name, hotkey->display_name, false);
+    DrawInputBindingButton(bsi, InputBindingInfo::Type::Button, "Hotkeys", hotkey->name,
+                           Host::TranslateToCString("Hotkeys", hotkey->display_name), false);
   }
 
   EndMenuButtons();
@@ -5166,6 +5168,7 @@ void FullscreenUI::DrawSaveStateSelector(bool is_loading)
   ImGui::PushStyleColor(ImGuiCol_ChildBg, ModAlpha(UIBackgroundColor, 0.9f));
   ImGui::SetCursorPos(ImVec2(0.0f, heading_size.y));
 
+  bool closed = false;
   bool close_handled = false;
   if (s_save_state_selector_open &&
       ImGui::BeginChild("state_list", ImVec2(io.DisplaySize.x, io.DisplaySize.y - heading_size.y), false,
@@ -5193,15 +5196,123 @@ void FullscreenUI::DrawSaveStateSelector(bool is_loading)
 
     u32 grid_x = 0;
     ImGui::SetCursorPos(ImVec2(start_x, 0.0f));
-    for (u32 i = 0; i < s_save_state_selector_slots.size(); i++)
+    for (u32 i = 0; i < s_save_state_selector_slots.size();)
     {
       if (i == 0)
         ResetFocusHere();
 
       const SaveStateListEntry& entry = s_save_state_selector_slots[i];
+      if (static_cast<s32>(i) == s_save_state_selector_submenu_index)
+      {
+        // can't use a choice dialog here, because we're already in a modal...
+        ImGuiFullscreen::PushResetLayout();
+        ImGui::PushFont(g_large_font);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, LayoutScale(10.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            LayoutScale(LAYOUT_MENU_BUTTON_X_PADDING, LAYOUT_MENU_BUTTON_Y_PADDING));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, UIPrimaryTextColor);
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, UIPrimaryDarkColor);
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIPrimaryColor);
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, MulAlpha(UIBackgroundColor, 0.95f));
+
+        const float width = LayoutScale(600.0f);
+        const float title_height =
+          g_large_font->FontSize + ImGui::GetStyle().FramePadding.y * 2.0f + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        const float height =
+          title_height +
+          LayoutScale(LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY + (LAYOUT_MENU_BUTTON_Y_PADDING * 2.0f)) * 3.0f;
+        ImGui::SetNextWindowSize(ImVec2(width, height));
+        ImGui::SetNextWindowPos(ImGui::GetIO().DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::OpenPopup(entry.title.c_str());
+
+        bool removed = false;
+        if (ImGui::BeginPopupModal(entry.title.c_str(), &is_open,
+                                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+        {
+          ImGui::PushStyleColor(ImGuiCol_Text, UIBackgroundTextColor);
+
+          BeginMenuButtons();
+
+          if (ActiveButton(is_loading ? FSUI_ICONSTR(ICON_FA_FOLDER_OPEN, "Load State") :
+                                        FSUI_ICONSTR(ICON_FA_FOLDER_OPEN, "Save State"),
+                           false, true, LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
+          {
+            if (is_loading)
+              DoLoadState(std::move(entry.path));
+            else
+              DoSaveState(entry.slot, entry.global);
+
+            closed = true;
+          }
+
+          if (ActiveButton(FSUI_ICONSTR(ICON_FA_FOLDER_MINUS, "Delete Save"), false, true,
+                           LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
+          {
+            if (!FileSystem::FileExists(entry.path.c_str()))
+            {
+              ShowToast({}, fmt::format(FSUI_FSTR("{} does not exist."), ImGuiFullscreen::RemoveHash(entry.title)));
+              is_open = true;
+            }
+            else if (FileSystem::DeleteFile(entry.path.c_str()))
+            {
+              ShowToast({}, fmt::format(FSUI_FSTR("{} deleted."), ImGuiFullscreen::RemoveHash(entry.title)));
+              s_save_state_selector_slots.erase(s_save_state_selector_slots.begin() + i);
+              removed = true;
+
+              if (s_save_state_selector_slots.empty())
+                closed = true;
+              else
+                is_open = false;
+            }
+            else
+            {
+              ShowToast({}, fmt::format(FSUI_FSTR("Failed to delete {}."), ImGuiFullscreen::RemoveHash(entry.title)));
+              is_open = false;
+            }
+          }
+
+          if (ActiveButton(FSUI_ICONSTR(ICON_FA_WINDOW_CLOSE, "Close Menu"), false, true,
+                           LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
+          {
+            is_open = false;
+          }
+
+          EndMenuButtons();
+
+          ImGui::PopStyleColor();
+          ImGui::EndPopup();
+        }
+
+        // don't let the back button flow through to the main window
+        if (WantsToCloseMenu())
+        {
+          close_handled = true;
+          is_open = false;
+        }
+
+        if (!is_open || closed)
+        {
+          s_save_state_selector_submenu_index = -1;
+          if (!closed)
+            QueueResetFocus();
+        }
+
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(3);
+        ImGui::PopFont();
+        ImGuiFullscreen::PopResetLayout();
+
+        if (removed)
+          continue;
+      }
+
       ImGuiWindow* window = ImGui::GetCurrentWindow();
       if (window->SkipItems)
+      {
+        i++;
         continue;
+      }
 
       const ImGuiID id = window->GetID(static_cast<int>(i));
       const ImVec2 pos(window->DC.CursorPos);
@@ -5256,133 +5367,17 @@ void FullscreenUI::DrawSaveStateSelector(bool is_loading)
         if (pressed)
         {
           if (is_loading)
-          {
             DoLoadState(entry.path);
-            CloseSaveStateSelector();
-            ReturnToPreviousWindow();
-            break;
-          }
           else
-          {
             DoSaveState(entry.slot, entry.global);
-            CloseSaveStateSelector();
-            ReturnToPreviousWindow();
-            break;
-          }
+
+          closed = true;
         }
 
         if (hovered && (ImGui::IsItemClicked(ImGuiMouseButton_Right) ||
                         ImGui::IsNavInputTest(ImGuiNavInput_Input, ImGuiNavReadMode_Pressed)))
         {
           s_save_state_selector_submenu_index = static_cast<s32>(i);
-        }
-
-        if (static_cast<s32>(i) == s_save_state_selector_submenu_index)
-        {
-          // can't use a choice dialog here, because we're already in a modal...
-          ImGuiFullscreen::PushResetLayout();
-          ImGui::PushFont(g_large_font);
-          ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, LayoutScale(10.0f));
-          ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                              LayoutScale(LAYOUT_MENU_BUTTON_X_PADDING, LAYOUT_MENU_BUTTON_Y_PADDING));
-          ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-          ImGui::PushStyleColor(ImGuiCol_Text, UIPrimaryTextColor);
-          ImGui::PushStyleColor(ImGuiCol_TitleBg, UIPrimaryDarkColor);
-          ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIPrimaryColor);
-          ImGui::PushStyleColor(ImGuiCol_PopupBg, MulAlpha(UIBackgroundColor, 0.95f));
-
-          const float width = LayoutScale(600.0f);
-          const float title_height =
-            g_large_font->FontSize + ImGui::GetStyle().FramePadding.y * 2.0f + ImGui::GetStyle().WindowPadding.y * 2.0f;
-          const float height =
-            title_height +
-            LayoutScale(LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY + (LAYOUT_MENU_BUTTON_Y_PADDING * 2.0f)) * 3.0f;
-          ImGui::SetNextWindowSize(ImVec2(width, height));
-          ImGui::SetNextWindowPos(ImGui::GetIO().DisplaySize * 0.5f, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-          ImGui::OpenPopup(entry.title.c_str());
-
-          // don't let the back button flow through to the main window
-          bool submenu_open = !WantsToCloseMenu();
-          close_handled ^= submenu_open;
-
-          bool closed = false;
-          if (ImGui::BeginPopupModal(entry.title.c_str(), &is_open,
-                                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
-          {
-            ImGui::PushStyleColor(ImGuiCol_Text, UIBackgroundTextColor);
-
-            BeginMenuButtons();
-
-            if (ActiveButton(is_loading ? FSUI_ICONSTR(ICON_FA_FOLDER_OPEN, "Load State") :
-                                          FSUI_ICONSTR(ICON_FA_FOLDER_OPEN, "Save State"),
-                             false, true, LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
-            {
-              if (is_loading)
-                DoLoadState(std::move(entry.path));
-              else
-                DoSaveState(entry.slot, entry.global);
-
-              CloseSaveStateSelector();
-              ReturnToPreviousWindow();
-              closed = true;
-            }
-
-            if (ActiveButton(FSUI_ICONSTR(ICON_FA_FOLDER_MINUS, "Delete Save"), false, true,
-                             LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
-            {
-              if (!FileSystem::FileExists(entry.path.c_str()))
-              {
-                ShowToast({}, fmt::format(FSUI_FSTR("{} does not exist."), ImGuiFullscreen::RemoveHash(entry.title)));
-                is_open = true;
-              }
-              else if (FileSystem::DeleteFile(entry.path.c_str()))
-              {
-                ShowToast({}, fmt::format(FSUI_FSTR("{} deleted."), ImGuiFullscreen::RemoveHash(entry.title)));
-                s_save_state_selector_slots.erase(s_save_state_selector_slots.begin() + i);
-
-                if (s_save_state_selector_slots.empty())
-                {
-                  CloseSaveStateSelector();
-                  ReturnToPreviousWindow();
-                  closed = true;
-                }
-                else
-                {
-                  is_open = false;
-                }
-              }
-              else
-              {
-                ShowToast({}, fmt::format(FSUI_FSTR("Failed to delete {}."), ImGuiFullscreen::RemoveHash(entry.title)));
-                is_open = false;
-              }
-            }
-
-            if (ActiveButton(FSUI_ICONSTR(ICON_FA_WINDOW_CLOSE, "Close Menu"), false, true,
-                             LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY))
-            {
-              is_open = false;
-            }
-
-            EndMenuButtons();
-
-            ImGui::PopStyleColor();
-            ImGui::EndPopup();
-          }
-          if (!is_open)
-          {
-            s_save_state_selector_submenu_index = -1;
-            if (!closed)
-              QueueResetFocus();
-          }
-
-          ImGui::PopStyleColor(4);
-          ImGui::PopStyleVar(3);
-          ImGui::PopFont();
-          ImGuiFullscreen::PopResetLayout();
-
-          if (closed)
-            break;
         }
       }
 
@@ -5397,6 +5392,8 @@ void FullscreenUI::DrawSaveStateSelector(bool is_loading)
       {
         ImGui::SameLine(start_x + static_cast<float>(grid_x) * (item_width + item_spacing));
       }
+
+      i++;
     }
 
     EndMenuButtons();
@@ -5408,7 +5405,12 @@ void FullscreenUI::DrawSaveStateSelector(bool is_loading)
   ImGui::EndPopup();
   ImGui::PopStyleVar(5);
 
-  if (!close_handled && WantsToCloseMenu())
+  if (closed)
+  {
+    CloseSaveStateSelector();
+    ReturnToMainWindow();
+  }
+  else if (!close_handled && WantsToCloseMenu())
   {
     CloseSaveStateSelector();
     ReturnToPreviousWindow();
@@ -6100,7 +6102,7 @@ void FullscreenUI::DrawGameListSettingsPage(const ImVec2& heading_size)
 
   for (const auto& it : s_game_list_directories_cache)
   {
-    if (MenuButton(SmallString::from_fmt(ICON_FA_FOLDER "{}", it.first),
+    if (MenuButton(SmallString::from_fmt(ICON_FA_FOLDER " {}", it.first),
                    it.second ? FSUI_CSTR("Scanning Subdirectories") : FSUI_CSTR("Not Scanning Subdirectories")))
     {
       ImGuiFullscreen::ChoiceDialogOptions options = {
@@ -6682,110 +6684,6 @@ void FullscreenUI::ProgressCallback::SetCancelled()
     m_cancelled = true;
 }
 
-#else
-
-// "Lightweight" version with only notifications for Android.
-namespace FullscreenUI {
-static bool s_initialized = false;
-static bool s_tried_to_initialize = false;
-} // namespace FullscreenUI
-
-bool FullscreenUI::Initialize()
-{
-  if (s_initialized)
-    return true;
-
-  if (s_tried_to_initialize)
-    return false;
-
-  ImGuiFullscreen::SetTheme(false);
-  ImGuiFullscreen::UpdateLayoutScale();
-
-  if (!ImGuiManager::AddFullscreenFontsIfMissing() || !ImGuiFullscreen::Initialize("images/placeholder.png"))
-  {
-    ImGuiFullscreen::Shutdown();
-    s_tried_to_initialize = true;
-    return false;
-  }
-
-  s_initialized = true;
-  return true;
-}
-
-bool FullscreenUI::IsInitialized()
-{
-  return s_initialized;
-}
-
-bool FullscreenUI::HasActiveWindow()
-{
-  return false;
-}
-
-void FullscreenUI::CheckForConfigChanges(const Settings& old_settings)
-{
-  // noop
-}
-
-void FullscreenUI::OnSystemStarted()
-{
-  // noop
-}
-
-void FullscreenUI::OnSystemPaused()
-{
-  // noop
-}
-
-void FullscreenUI::OnSystemResumed()
-{
-  // noop
-}
-
-void FullscreenUI::OnSystemDestroyed()
-{
-  // noop
-}
-
-void FullscreenUI::OnRunningGameChanged()
-{
-  // noop
-}
-
-void FullscreenUI::OpenPauseMenu()
-{
-  // noop
-}
-
-bool FullscreenUI::OpenAchievementsWindow()
-{
-  return false;
-}
-
-bool FullscreenUI::OpenLeaderboardsWindow()
-{
-  return false;
-}
-
-void FullscreenUI::Shutdown()
-{
-  ImGuiFullscreen::Shutdown();
-  s_initialized = false;
-  s_tried_to_initialize = false;
-}
-
-void FullscreenUI::Render()
-{
-  if (!s_initialized)
-    return;
-
-  ImGuiFullscreen::UploadAsyncTextures();
-
-  ImGuiFullscreen::BeginLayout();
-  ImGuiFullscreen::EndLayout();
-  ImGuiFullscreen::ResetCloseMenuIfNeeded();
-}
-
 #endif // __ANDROID__
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -7183,11 +7081,9 @@ TRANSLATE_NOOP("FullscreenUI", "Patches");
 TRANSLATE_NOOP("FullscreenUI", "Patches the BIOS to skip the boot animation. Safe to enable.");
 TRANSLATE_NOOP("FullscreenUI", "Path");
 TRANSLATE_NOOP("FullscreenUI", "Pause On Focus Loss");
-TRANSLATE_NOOP("FullscreenUI", "Pause On Menu");
 TRANSLATE_NOOP("FullscreenUI", "Pause On Start");
 TRANSLATE_NOOP("FullscreenUI", "Pauses the emulator when a game is started.");
 TRANSLATE_NOOP("FullscreenUI", "Pauses the emulator when you minimize the window or switch to another application, and unpauses when you switch back.");
-TRANSLATE_NOOP("FullscreenUI", "Pauses the emulator when you open the quick menu, and unpauses when you close it.");
 TRANSLATE_NOOP("FullscreenUI", "Per-Game Configuration");
 TRANSLATE_NOOP("FullscreenUI", "Per-game controller configuration initialized with global settings.");
 TRANSLATE_NOOP("FullscreenUI", "Performance enhancement - jumps directly between blocks instead of returning to the dispatcher.");

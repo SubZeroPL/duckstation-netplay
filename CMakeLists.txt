@@ -47,7 +47,7 @@ endif()
 
 # Required libraries.
 if(ENABLE_SDL2)
-  find_package(SDL2 2.28.2 REQUIRED)
+  find_package(SDL2 2.28.5 REQUIRED)
 endif()
 if(NOT WIN32 AND NOT ANDROID)
   find_package(CURL REQUIRED)
@@ -59,7 +59,7 @@ if(NOT WIN32 AND NOT ANDROID)
   endif()
 endif()
 if(BUILD_QT_FRONTEND)
-  find_package(Qt6 6.5.1 COMPONENTS Core Gui Widgets Network LinguistTools REQUIRED)
+  find_package(Qt6 6.5.3 COMPONENTS Core Gui Widgets Network LinguistTools REQUIRED)
 endif()
 
 
@@ -139,7 +139,7 @@ if("${CMAKE_OSX_ARCHITECTURES}" STREQUAL "arm64")
   # Cross-compile on macos.
   set(CPU_ARCH "aarch64")
 elseif("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
-   "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64")
+       "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
   if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(CPU_ARCH "x64")
   else()
@@ -171,6 +171,9 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm" OR "${CMAKE_SYSTEM_PROCESSOR}"
   endif()
 elseif("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "riscv64")
   set(CPU_ARCH "riscv64")
+
+  # Not done for us. Or we should inline atomics?
+  link_libraries("-latomic")
 else()
   message(FATAL_ERROR "Unknown system processor: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()

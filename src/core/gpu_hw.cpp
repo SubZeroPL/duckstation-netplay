@@ -227,13 +227,13 @@ bool GPU_HW::Initialize()
 
   if (!CompilePipelines())
   {
-    Log_ErrorPrintf("Failed to compile pipelines");
+    Log_ErrorPrint("Failed to compile pipelines");
     return false;
   }
 
   if (!CreateBuffers())
   {
-    Log_ErrorPrintf("Failed to create framebuffer");
+    Log_ErrorPrint("Failed to create framebuffer");
     return false;
   }
 
@@ -354,24 +354,30 @@ void GPU_HW::UpdateSettings(const Settings& old_settings)
 
   if (m_resolution_scale != resolution_scale)
   {
-    Host::AddKeyedFormattedOSDMessage(
-      "ResolutionScale", 10.0f, TRANSLATE("OSDMessage", "Resolution scale set to %ux (display %ux%u, VRAM %ux%u)"),
-      resolution_scale, m_crtc_state.display_vram_width * resolution_scale,
-      resolution_scale * m_crtc_state.display_vram_height, VRAM_WIDTH * resolution_scale,
-      VRAM_HEIGHT * resolution_scale);
+    Host::AddIconOSDMessage(
+      "ResolutionScaleChanged", ICON_FA_PAINT_BRUSH,
+      fmt::format(TRANSLATE_FS("GPU_HW", "Resolution scale set to {0}x (display {1}x{2}, VRAM {3}x{4})"),
+                  resolution_scale, m_crtc_state.display_vram_width * resolution_scale,
+                  resolution_scale * m_crtc_state.display_vram_height, VRAM_WIDTH * resolution_scale,
+                  VRAM_HEIGHT * resolution_scale),
+      Host::OSD_INFO_DURATION);
   }
 
   if (m_multisamples != multisamples || m_per_sample_shading != per_sample_shading)
   {
     if (per_sample_shading)
     {
-      Host::AddKeyedFormattedOSDMessage(
-        "Multisampling", 10.0f, TRANSLATE("OSDMessage", "Multisample anti-aliasing set to %ux (SSAA)."), multisamples);
+      Host::AddIconOSDMessage(
+        "MultisamplingChanged", ICON_FA_PAINT_BRUSH,
+        fmt::format(TRANSLATE_FS("GPU_HW", "Multisample anti-aliasing set to {}x (SSAA)."), multisamples),
+        Host::OSD_INFO_DURATION);
     }
     else
     {
-      Host::AddKeyedFormattedOSDMessage("Multisampling", 10.0f,
-                                        TRANSLATE("OSDMessage", "Multisample anti-aliasing set to %ux."), multisamples);
+      Host::AddIconOSDMessage(
+        "MultisamplingChanged", ICON_FA_PAINT_BRUSH,
+        fmt::format(TRANSLATE_FS("GPU_HW", "Multisample anti-aliasing set to {}x."), multisamples),
+        Host::OSD_INFO_DURATION);
     }
   }
 
@@ -435,8 +441,8 @@ void GPU_HW::CheckSettings()
 
   if (m_multisamples != g_settings.gpu_multisamples)
   {
-    Host::AddIconOSDMessage("MSAAUnsupported", ICON_FA_PAINT_BRUSH,
-                            fmt::format(TRANSLATE_FS("OSDMessage", "{}x MSAA is not supported, using {}x instead."),
+    Host::AddIconOSDMessage("MSAAUnsupported", ICON_FA_EXCLAMATION_TRIANGLE,
+                            fmt::format(TRANSLATE_FS("GPU_HW", "{}x MSAA is not supported, using {}x instead."),
                                         g_settings.gpu_multisamples, m_multisamples),
                             Host::OSD_CRITICAL_ERROR_DURATION);
   }
@@ -447,14 +453,16 @@ void GPU_HW::CheckSettings()
 
   if (!m_per_sample_shading && g_settings.gpu_per_sample_shading)
   {
-    Host::AddOSDMessage(TRANSLATE_STR("OSDMessage", "SSAA is not supported, using MSAA instead."), 20.0f);
+    Host::AddIconOSDMessage("SSAAUnsupported", ICON_FA_EXCLAMATION_TRIANGLE,
+                            TRANSLATE_STR("GPU_HW", "SSAA is not supported, using MSAA instead."),
+                            Host::OSD_ERROR_DURATION);
   }
   if (!features.dual_source_blend && TextureFilterRequiresDualSourceBlend(m_texture_filtering))
   {
-    Host::AddFormattedOSDMessage(
-      Host::OSD_CRITICAL_ERROR_DURATION,
-      TRANSLATE("OSDMessage", "Texture filter '%s' is not supported with the current renderer."),
-      Settings::GetTextureFilterDisplayName(m_texture_filtering));
+    Host::AddIconOSDMessage(
+      "TextureFilterUnsupported", ICON_FA_EXCLAMATION_TRIANGLE,
+      fmt::format(TRANSLATE_FS("GPU_HW", "Texture filter '{}' is not supported with the current renderer."),
+                  Settings::GetTextureFilterDisplayName(m_texture_filtering), Host::OSD_ERROR_DURATION));
     m_texture_filtering = GPUTextureFilter::Nearest;
   }
 
@@ -463,9 +471,9 @@ void GPU_HW::CheckSettings()
 
   if (!features.geometry_shaders && m_wireframe_mode != GPUWireframeMode::Disabled)
   {
-    Host::AddOSDMessage(
-      TRANSLATE("OSDMessage",
-                "Geometry shaders are not supported by your GPU, and are required for wireframe rendering."),
+    Host::AddIconOSDMessage(
+      "GeometryShadersUnsupported", ICON_FA_EXCLAMATION_TRIANGLE,
+      TRANSLATE("GPU_HW", "Geometry shaders are not supported by your GPU, and are required for wireframe rendering."),
       Host::OSD_CRITICAL_ERROR_DURATION);
     m_wireframe_mode = GPUWireframeMode::Disabled;
   }
@@ -478,11 +486,10 @@ void GPU_HW::CheckSettings()
     {
       Host::AddIconOSDMessage(
         "BoxDownsampleUnsupported", ICON_FA_PAINT_BRUSH,
-        fmt::format(
-          TRANSLATE_FS("OSDMessage",
-                       "Resolution scale {0}x is not divisible by downsample scale {1}x, using {2}x instead."),
-          resolution_scale, g_settings.gpu_downsample_scale, box_downscale),
-        Host::OSD_ERROR_DURATION);
+        fmt::format(TRANSLATE_FS(
+                      "GPU_HW", "Resolution scale {0}x is not divisible by downsample scale {1}x, using {2}x instead."),
+                    resolution_scale, g_settings.gpu_downsample_scale, box_downscale),
+        Host::OSD_WARNING_DURATION);
     }
     else
     {
@@ -515,7 +522,7 @@ u32 GPU_HW::CalculateResolutionScale() const
                                              (NTSC_VERTICAL_ACTIVE_END - NTSC_VERTICAL_ACTIVE_START));
     const s32 preferred_scale =
       static_cast<s32>(std::ceil(static_cast<float>(g_gpu_device->GetWindowHeight()) / height));
-    Log_InfoPrintf("Height = %d, preferred scale = %d", height, preferred_scale);
+    Log_VerboseFmt("Height = {}, preferred scale = {}", height, preferred_scale);
 
     scale = static_cast<u32>(std::clamp<s32>(preferred_scale, 1, max_resolution_scale));
   }
@@ -523,13 +530,16 @@ u32 GPU_HW::CalculateResolutionScale() const
   if (g_settings.gpu_downsample_mode == GPUDownsampleMode::Adaptive && scale > 1 && !Common::IsPow2(scale))
   {
     const u32 new_scale = Common::PreviousPow2(scale);
-    Log_InfoPrintf("Resolution scale %ux not supported for adaptive smoothing, using %ux", scale, new_scale);
+    Log_WarningFmt("Resolution scale {}x not supported for adaptive downsampling, using {}x", scale, new_scale);
 
     if (g_settings.gpu_resolution_scale != 0)
     {
-      Host::AddFormattedOSDMessage(
-        10.0f, TRANSLATE("OSDMessage", "Resolution scale %ux not supported for adaptive smoothing, using %ux."), scale,
-        new_scale);
+      Host::AddIconOSDMessage(
+        "ResolutionNotPow2", ICON_FA_PAINT_BRUSH,
+        fmt::format(
+          TRANSLATE_FS("GPU_HW", "Resolution scale {0}x not supported for adaptive downsampling, using {1}x."), scale,
+          new_scale),
+        Host::OSD_WARNING_DURATION);
     }
 
     scale = new_scale;
@@ -586,18 +596,18 @@ std::tuple<u32, u32> GPU_HW::GetFullDisplayResolution(bool scaled /* = true */)
 
 void GPU_HW::PrintSettingsToLog()
 {
-  Log_InfoPrintf("Resolution Scale: %u (%ux%u), maximum %u", m_resolution_scale, VRAM_WIDTH * m_resolution_scale,
-                 VRAM_HEIGHT * m_resolution_scale, GetMaxResolutionScale());
-  Log_InfoPrintf("Multisampling: %ux%s", m_multisamples, m_per_sample_shading ? " (per sample shading)" : "");
-  Log_InfoPrintf("Dithering: %s%s", m_true_color ? "Disabled" : "Enabled",
-                 (!m_true_color && m_scaled_dithering) ? " (Scaled)" : "");
-  Log_InfoPrintf("Texture Filtering: %s", Settings::GetTextureFilterDisplayName(m_texture_filtering));
-  Log_InfoPrintf("Dual-source blending: %s", m_supports_dual_source_blend ? "Supported" : "Not supported");
-  Log_InfoPrintf("Using UV limits: %s", m_using_uv_limits ? "YES" : "NO");
-  Log_InfoPrintf("Depth buffer: %s", m_pgxp_depth_buffer ? "YES" : "NO");
-  Log_InfoPrintf("Downsampling: %s", Settings::GetDownsampleModeDisplayName(m_downsample_mode));
-  Log_InfoPrintf("Wireframe rendering: %s", Settings::GetGPUWireframeModeDisplayName(m_wireframe_mode));
-  Log_InfoPrintf("Using software renderer for readbacks: %s", m_sw_renderer ? "YES" : "NO");
+  Log_InfoFmt("Resolution Scale: {} ({}x{}), maximum {}", m_resolution_scale, VRAM_WIDTH * m_resolution_scale,
+              VRAM_HEIGHT * m_resolution_scale, GetMaxResolutionScale());
+  Log_InfoFmt("Multisampling: {}x{}", m_multisamples, m_per_sample_shading ? " (per sample shading)" : "");
+  Log_InfoFmt("Dithering: {}{}", m_true_color ? "Disabled" : "Enabled",
+              (!m_true_color && m_scaled_dithering) ? " (Scaled)" : "");
+  Log_InfoFmt("Texture Filtering: {}", Settings::GetTextureFilterDisplayName(m_texture_filtering));
+  Log_InfoFmt("Dual-source blending: {}", m_supports_dual_source_blend ? "Supported" : "Not supported");
+  Log_InfoFmt("Using UV limits: {}", m_using_uv_limits ? "YES" : "NO");
+  Log_InfoFmt("Depth buffer: {}", m_pgxp_depth_buffer ? "YES" : "NO");
+  Log_InfoFmt("Downsampling: {}", Settings::GetDownsampleModeDisplayName(m_downsample_mode));
+  Log_InfoFmt("Wireframe rendering: {}", Settings::GetGPUWireframeModeDisplayName(m_wireframe_mode));
+  Log_InfoFmt("Using software renderer for readbacks: {}", m_sw_renderer ? "YES" : "NO");
 }
 
 bool GPU_HW::CreateBuffers()
@@ -650,13 +660,13 @@ bool GPU_HW::CreateBuffers()
   GL_OBJECT_NAME(m_vram_readback_framebuffer, "VRAM Readback Framebuffer");
   GL_OBJECT_NAME(m_display_framebuffer, "Display Framebuffer");
 
-  if (!(m_vram_upload_buffer = g_gpu_device->CreateTextureBuffer(GPUTextureBuffer::Format::R16UI,
-                                                                 VRAM_UPDATE_TEXTURE_BUFFER_SIZE / sizeof(u16))))
+  if (!(m_vram_upload_buffer =
+          g_gpu_device->CreateTextureBuffer(GPUTextureBuffer::Format::R16UI, GPUDevice::MIN_TEXEL_BUFFER_ELEMENTS)))
   {
     return false;
   }
 
-  Log_InfoPrintf("Created HW framebuffer of %ux%u", texture_width, texture_height);
+  Log_InfoFmt("Created HW framebuffer of {}x{}", texture_width, texture_height);
 
   if (m_downsample_mode == GPUDownsampleMode::Adaptive)
   {
@@ -861,12 +871,18 @@ bool GPU_HW::CompilePipelines()
                 }
                 else
                 {
-                  const u32 factor = (static_cast<GPUTransparencyMode>(transparency_mode) ==
-                                      GPUTransparencyMode::HalfBackgroundPlusHalfForeground) ?
-                                       0xFF808080u :
-                                       0xFFFFFFFFu;
+                  // TODO: This isn't entirely accurate, 127.5 versus 128.
+                  // But if we use fbfetch on Mali, it doesn't matter.
                   plconfig.blend.src_blend = GPUPipeline::BlendFunc::One;
-                  plconfig.blend.dst_blend = GPUPipeline::BlendFunc::ConstantColor;
+                  plconfig.blend.dst_blend = GPUPipeline::BlendFunc::One;
+                  if (static_cast<GPUTransparencyMode>(transparency_mode) ==
+                      GPUTransparencyMode::HalfBackgroundPlusHalfForeground)
+                  {
+                    plconfig.blend.dst_blend = GPUPipeline::BlendFunc::ConstantColor;
+                    plconfig.blend.dst_alpha_blend = GPUPipeline::BlendFunc::ConstantColor;
+                    plconfig.blend.constant = 0x00808080u;
+                  }
+
                   plconfig.blend.blend_op =
                     (static_cast<GPUTransparencyMode>(transparency_mode) ==
                        GPUTransparencyMode::BackgroundMinusForeground &&
@@ -874,7 +890,6 @@ bool GPU_HW::CompilePipelines()
                      static_cast<BatchRenderMode>(render_mode) != BatchRenderMode::OnlyOpaque) ?
                       GPUPipeline::BlendOp::ReverseSubtract :
                       GPUPipeline::BlendOp::Add;
-                  plconfig.blend.constant = factor;
                 }
               }
 
@@ -1646,9 +1661,9 @@ void GPU_HW::LoadVertices()
 
       if ((max_x - min_x) >= MAX_PRIMITIVE_WIDTH || (max_y - min_y) >= MAX_PRIMITIVE_HEIGHT)
       {
-        Log_DebugPrintf("Culling too-large polygon: %d,%d %d,%d %d,%d", native_vertex_positions[0][0],
-                        native_vertex_positions[0][1], native_vertex_positions[1][0], native_vertex_positions[1][1],
-                        native_vertex_positions[2][0], native_vertex_positions[2][1]);
+        Log_DebugFmt("Culling too-large polygon: {},{} {},{} {},{}", native_vertex_positions[0][0],
+                     native_vertex_positions[0][1], native_vertex_positions[1][0], native_vertex_positions[1][1],
+                     native_vertex_positions[2][0], native_vertex_positions[2][1]);
       }
       else
       {
@@ -1679,9 +1694,9 @@ void GPU_HW::LoadVertices()
         // Cull polygons which are too large.
         if ((max_x_123 - min_x_123) >= MAX_PRIMITIVE_WIDTH || (max_y_123 - min_y_123) >= MAX_PRIMITIVE_HEIGHT)
         {
-          Log_DebugPrintf("Culling too-large polygon (quad second half): %d,%d %d,%d %d,%d",
-                          native_vertex_positions[2][0], native_vertex_positions[2][1], native_vertex_positions[1][0],
-                          native_vertex_positions[1][1], native_vertex_positions[0][0], native_vertex_positions[0][1]);
+          Log_DebugFmt("Culling too-large polygon (quad second half): {},{} {},{} {},{}", native_vertex_positions[2][0],
+                       native_vertex_positions[2][1], native_vertex_positions[1][0], native_vertex_positions[1][1],
+                       native_vertex_positions[0][0], native_vertex_positions[0][1]);
         }
         else
         {
@@ -1757,8 +1772,7 @@ void GPU_HW::LoadVertices()
 
           if (rectangle_width >= MAX_PRIMITIVE_WIDTH || rectangle_height >= MAX_PRIMITIVE_HEIGHT)
           {
-            Log_DebugPrintf("Culling too-large rectangle: %d,%d %dx%d", pos_x, pos_y, rectangle_width,
-                            rectangle_height);
+            Log_DebugFmt("Culling too-large rectangle: {},{} {}x{}", pos_x, pos_y, rectangle_width, rectangle_height);
             return;
           }
         }
@@ -1866,7 +1880,7 @@ void GPU_HW::LoadVertices()
         const auto [min_y, max_y] = MinMax(start_y, end_y);
         if ((max_x - min_x) >= MAX_PRIMITIVE_WIDTH || (max_y - min_y) >= MAX_PRIMITIVE_HEIGHT)
         {
-          Log_DebugPrintf("Culling too-large line: %d,%d - %d,%d", start_x, start_y, end_x, end_y);
+          Log_DebugFmt("Culling too-large line: {},{} - {},{}", start_x, start_y, end_x, end_y);
           return;
         }
 
@@ -1932,7 +1946,7 @@ void GPU_HW::LoadVertices()
           const auto [min_y, max_y] = MinMax(start_y, end_y);
           if ((max_x - min_x) >= MAX_PRIMITIVE_WIDTH || (max_y - min_y) >= MAX_PRIMITIVE_HEIGHT)
           {
-            Log_DebugPrintf("Culling too-large line: %d,%d - %d,%d", start_x, start_y, end_x, end_y);
+            Log_DebugFmt("Culling too-large line: {},{} - {},{}", start_x, start_y, end_x, end_y);
           }
           else
           {
@@ -1990,7 +2004,7 @@ bool GPU_HW::BlitVRAMReplacementTexture(const TextureReplacementTexture* tex, u3
   {
     if (!m_vram_replacement_texture->Update(0, 0, width, height, tex->GetPixels(), tex->GetPitch()))
     {
-      Log_ErrorPrintf("Update %ux%u texture failed.", width, height);
+      Log_ErrorFmt("Update {}x{} texture failed.", width, height);
       return false;
     }
   }
@@ -2437,7 +2451,7 @@ void GPU_HW::DispatchRenderCommand()
                                         (m_draw_mode.mode_reg.IsUsingPalette() &&
                                          m_draw_mode.GetTexturePaletteRectangle().Intersects(m_vram_dirty_rect))))
       {
-        // Log_DevPrintf("Invalidating VRAM read cache due to drawing area overlap");
+        // Log_DevPrint("Invalidating VRAM read cache due to drawing area overlap");
         if (!IsFlushed())
           FlushRender();
 
@@ -2716,7 +2730,7 @@ void GPU_HW::DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top
     uniforms.rcp_size[1] = rcp_height;
     uniforms.lod = static_cast<float>(level - 1);
 
-    g_gpu_device->InvalidateRenderTarget(m_downsample_render_texture.get());
+    g_gpu_device->ClearRenderTarget(m_downsample_render_texture.get(), 0);
     g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
     g_gpu_device->SetViewportAndScissor(0, 0, level_width, level_height);
     g_gpu_device->SetPipeline((level == 1) ? m_downsample_first_pass_pipeline.get() :
@@ -2745,7 +2759,7 @@ void GPU_HW::DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top
     uniforms.lod = 0.0f;
 
     m_downsample_render_texture->MakeReadyForSampling();
-    g_gpu_device->InvalidateRenderTarget(m_downsample_weight_texture.get());
+    g_gpu_device->ClearRenderTarget(m_downsample_weight_texture.get(), 0);
     g_gpu_device->SetFramebuffer(m_downsample_weight_framebuffer.get());
     g_gpu_device->SetTextureSampler(0, m_downsample_render_texture.get(), g_gpu_device->GetNearestSampler());
     g_gpu_device->SetViewportAndScissor(0, 0, last_width, last_height);
@@ -2759,7 +2773,7 @@ void GPU_HW::DownsampleFramebufferAdaptive(GPUTexture* source, u32 left, u32 top
   {
     GL_SCOPE("Composite");
 
-    g_gpu_device->InvalidateRenderTarget(m_downsample_render_texture.get());
+    g_gpu_device->ClearRenderTarget(m_downsample_render_texture.get(), 0);
     g_gpu_device->SetFramebuffer(m_downsample_framebuffer.get());
     g_gpu_device->SetTextureSampler(0, m_downsample_texture.get(), m_downsample_composite_sampler.get());
     g_gpu_device->SetTextureSampler(1, m_downsample_weight_texture.get(), m_downsample_lod_sampler.get());

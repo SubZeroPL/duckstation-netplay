@@ -390,7 +390,7 @@ void EmuThread::setDefaultSettings(bool system /* = true */, bool controller /* 
   applySettings(false);
 
   if (system)
-    emit settingsResetToDefault();
+    emit settingsResetToDefault(system, controller);
 }
 
 void QtHost::SetDefaultSettings(SettingsInterface& si, bool system, bool controller)
@@ -1487,6 +1487,10 @@ bool Host::CopyTextToClipboard(const std::string_view& text)
 void Host::ReportDebuggerMessage(const std::string_view& message)
 {
   emit g_emu_thread->debuggerMessageReported(QString::fromUtf8(message));
+}
+
+void Host::AddFixedInputBindings(SettingsInterface& si)
+{
 }
 
 void Host::OnInputDeviceConnected(const std::string_view& identifier, const std::string_view& device_name)

@@ -7,6 +7,7 @@
 #include "common/fastjmp.h"
 #include "common/file_system.h"
 #include "common/log.h"
+#include "cpu_code_cache_private.h"
 #include "cpu_core_private.h"
 #include "cpu_disasm.h"
 #include "cpu_recompiler_thunks.h"
@@ -240,7 +241,7 @@ bool CPU::DoState(StateWrapper& sw)
   }
 
   sw.Do(&g_state.cache_control.bits);
-  sw.DoBytes(g_state.dcache.data(), g_state.dcache.size());
+  sw.DoBytes(g_state.scratchpad.data(), g_state.scratchpad.size());
 
   if (!GTE::DoState(sw))
     return false;
@@ -2230,6 +2231,7 @@ void CPU::Execute()
   {
     case CPUExecutionMode::Recompiler:
     case CPUExecutionMode::CachedInterpreter:
+    case CPUExecutionMode::NewRec:
       CodeCache::Execute();
       break;
 
@@ -2262,20 +2264,24 @@ void CPU::SingleStep()
 }
 
 template<PGXPMode pgxp_mode>
-void CPU::CodeCache::InterpretCachedBlock(const CodeBlock& block)
+void CPU::CodeCache::InterpretCachedBlock(const Block* block)
 {
   // set up the state so we've already fetched the instruction
-  DebugAssert(g_state.pc == block.GetPC());
-  g_state.npc = block.GetPC() + 4;
+  DebugAssert(g_state.pc == block->pc);
+  g_state.npc = block->pc + 4;
 
-  for (const CodeBlockInstruction& cbi : block.instructions)
+  const Instruction* instruction = block->Instructions();
+  const Instruction* end_instruction = instruction + block->size;
+  const CodeCache::InstructionInfo* info = block->InstructionsInfo();
+
+  do
   {
     g_state.pending_ticks++;
 
     // now executing the instruction we previously fetched
-    g_state.current_instruction.bits = cbi.instruction.bits;
-    g_state.current_instruction_pc = cbi.pc;
-    g_state.current_instruction_in_branch_delay_slot = cbi.is_branch_delay_slot;
+    g_state.current_instruction.bits = instruction->bits;
+    g_state.current_instruction_pc = info->pc;
+    g_state.current_instruction_in_branch_delay_slot = info->is_branch_delay_slot; // TODO: let int set it instead
     g_state.current_instruction_was_branch_taken = g_state.branch_was_taken;
     g_state.branch_was_taken = false;
     g_state.exception_raised = false;
@@ -2292,15 +2298,18 @@ void CPU::CodeCache::InterpretCachedBlock(const CodeBlock& block)
 
     if (g_state.exception_raised)
       break;
-  }
+
+    instruction++;
+    info++;
+  } while (instruction != end_instruction);
 
   // cleanup so the interpreter can kick in if needed
   g_state.next_instruction_is_branch_delay_slot = false;
 }
 
-template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::Disabled>(const CodeBlock& block);
-template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::Memory>(const CodeBlock& block);
-template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::CPU>(const CodeBlock& block);
+template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::Disabled>(const Block* block);
+template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::Memory>(const Block* block);
+template void CPU::CodeCache::InterpretCachedBlock<PGXPMode::CPU>(const Block* block);
 
 template<PGXPMode pgxp_mode>
 void CPU::CodeCache::InterpretUncachedBlock()
@@ -2348,6 +2357,13 @@ void CPU::CodeCache::InterpretUncachedBlock()
     {
       break;
     }
+    else if ((g_state.current_instruction.bits & 0xFFC0FFFFu) == 0x40806000u && HasPendingInterrupt())
+    {
+      // mtc0 rt, sr - Jackie Chan Stuntmaster, MTV Sports games.
+      // Pain in the ass games trigger a software interrupt by writing to SR.Im.
+      break;
+    }
+
 
     in_branch_delay_slot = branch;
   }
@@ -2388,7 +2404,7 @@ ALWAYS_INLINE_RELEASE Bus::MemoryWriteHandler CPU::GetMemoryWriteHandler(Virtual
 void CPU::UpdateMemoryPointers()
 {
   g_state.memory_handlers = Bus::GetMemoryHandlers(g_state.cop0_regs.sr.Isc, g_state.cop0_regs.sr.Swc);
-  g_state.fastmem_base = g_state.cop0_regs.sr.Isc ? nullptr : Bus::GetFastmemBase();
+  g_state.fastmem_base = Bus::GetFastmemBase(g_state.cop0_regs.sr.Isc);
 }
 
 void CPU::ExecutionModeChanged()
@@ -2665,46 +2681,47 @@ ALWAYS_INLINE bool CPU::DoSafeMemoryAccess(VirtualMemoryAddress address, u32& va
     case 0x00: // KUSEG 0M-512M
     case 0x04: // KSEG0 - physical memory cached
     {
-      address &= PHYSICAL_MEMORY_ADDRESS_MASK;
-      if ((address & DCACHE_LOCATION_MASK) == DCACHE_LOCATION)
+      if ((address & SCRATCHPAD_ADDR_MASK) == SCRATCHPAD_ADDR)
       {
-        const u32 offset = address & DCACHE_OFFSET_MASK;
+        const u32 offset = address & SCRATCHPAD_OFFSET_MASK;
 
         if constexpr (type == MemoryAccessType::Read)
         {
           if constexpr (size == MemoryAccessSize::Byte)
           {
-            value = CPU::g_state.dcache[offset];
+            value = CPU::g_state.scratchpad[offset];
           }
           else if constexpr (size == MemoryAccessSize::HalfWord)
           {
             u16 temp;
-            std::memcpy(&temp, &CPU::g_state.dcache[offset], sizeof(u16));
+            std::memcpy(&temp, &CPU::g_state.scratchpad[offset], sizeof(u16));
             value = ZeroExtend32(temp);
           }
           else if constexpr (size == MemoryAccessSize::Word)
           {
-            std::memcpy(&value, &CPU::g_state.dcache[offset], sizeof(u32));
+            std::memcpy(&value, &CPU::g_state.scratchpad[offset], sizeof(u32));
           }
         }
         else
         {
           if constexpr (size == MemoryAccessSize::Byte)
           {
-            CPU::g_state.dcache[offset] = Truncate8(value);
+            CPU::g_state.scratchpad[offset] = Truncate8(value);
           }
           else if constexpr (size == MemoryAccessSize::HalfWord)
           {
-            std::memcpy(&CPU::g_state.dcache[offset], &value, sizeof(u16));
+            std::memcpy(&CPU::g_state.scratchpad[offset], &value, sizeof(u16));
           }
           else if constexpr (size == MemoryAccessSize::Word)
           {
-            std::memcpy(&CPU::g_state.dcache[offset], &value, sizeof(u32));
+            std::memcpy(&CPU::g_state.scratchpad[offset], &value, sizeof(u32));
           }
         }
 
         return true;
       }
+
+      address &= PHYSICAL_MEMORY_ADDRESS_MASK;
     }
     break;
 
@@ -2732,17 +2749,17 @@ ALWAYS_INLINE bool CPU::DoSafeMemoryAccess(VirtualMemoryAddress address, u32& va
     {
       if constexpr (size == MemoryAccessSize::Byte)
       {
-        value = g_ram[offset];
+        value = g_unprotected_ram[offset];
       }
       else if constexpr (size == MemoryAccessSize::HalfWord)
       {
         u16 temp;
-        std::memcpy(&temp, &g_ram[offset], sizeof(temp));
+        std::memcpy(&temp, &g_unprotected_ram[offset], sizeof(temp));
         value = ZeroExtend32(temp);
       }
       else if constexpr (size == MemoryAccessSize::Word)
       {
-        std::memcpy(&value, &g_ram[offset], sizeof(u32));
+        std::memcpy(&value, &g_unprotected_ram[offset], sizeof(u32));
       }
     }
     else
@@ -2751,9 +2768,9 @@ ALWAYS_INLINE bool CPU::DoSafeMemoryAccess(VirtualMemoryAddress address, u32& va
 
       if constexpr (size == MemoryAccessSize::Byte)
       {
-        if (g_ram[offset] != Truncate8(value))
+        if (g_unprotected_ram[offset] != Truncate8(value))
         {
-          g_ram[offset] = Truncate8(value);
+          g_unprotected_ram[offset] = Truncate8(value);
           if (g_ram_code_bits[page_index])
             CPU::CodeCache::InvalidateBlocksWithPageIndex(page_index);
         }
@@ -2762,10 +2779,10 @@ ALWAYS_INLINE bool CPU::DoSafeMemoryAccess(VirtualMemoryAddress address, u32& va
       {
         const u16 new_value = Truncate16(value);
         u16 old_value;
-        std::memcpy(&old_value, &g_ram[offset], sizeof(old_value));
+        std::memcpy(&old_value, &g_unprotected_ram[offset], sizeof(old_value));
         if (old_value != new_value)
         {
-          std::memcpy(&g_ram[offset], &new_value, sizeof(u16));
+          std::memcpy(&g_unprotected_ram[offset], &new_value, sizeof(u16));
           if (g_ram_code_bits[page_index])
             CPU::CodeCache::InvalidateBlocksWithPageIndex(page_index);
         }
@@ -2773,10 +2790,10 @@ ALWAYS_INLINE bool CPU::DoSafeMemoryAccess(VirtualMemoryAddress address, u32& va
       else if constexpr (size == MemoryAccessSize::Word)
       {
         u32 old_value;
-        std::memcpy(&old_value, &g_ram[offset], sizeof(u32));
+        std::memcpy(&old_value, &g_unprotected_ram[offset], sizeof(u32));
         if (old_value != value)
         {
-          std::memcpy(&g_ram[offset], &value, sizeof(u32));
+          std::memcpy(&g_unprotected_ram[offset], &value, sizeof(u32));
           if (g_ram_code_bits[page_index])
             CPU::CodeCache::InvalidateBlocksWithPageIndex(page_index);
         }
@@ -2897,7 +2914,7 @@ bool CPU::SafeWriteMemoryWord(VirtualMemoryAddress addr, u32 value)
   if ((addr & 3) == 0)
     return DoSafeMemoryAccess<MemoryAccessType::Write, MemoryAccessSize::Word>(addr, value);
 
-  return SafeWriteMemoryHalfWord(addr, Truncate16(value >> 16)) &&
+  return SafeWriteMemoryHalfWord(addr, Truncate16(value)) &&
          SafeWriteMemoryHalfWord(addr + 2, Truncate16(value >> 16));
 }
 
@@ -2918,12 +2935,12 @@ void* CPU::GetDirectReadMemoryPointer(VirtualMemoryAddress address, MemoryAccess
     return &g_ram[paddr & g_ram_mask];
   }
 
-  if ((paddr & DCACHE_LOCATION_MASK) == DCACHE_LOCATION)
+  if ((paddr & SCRATCHPAD_ADDR_MASK) == SCRATCHPAD_ADDR)
   {
     if (read_ticks)
       *read_ticks = 0;
 
-    return &g_state.dcache[paddr & DCACHE_OFFSET_MASK];
+    return &g_state.scratchpad[paddr & SCRATCHPAD_OFFSET_MASK];
   }
 
   if (paddr >= BIOS_BASE && paddr < (BIOS_BASE + BIOS_SIZE))
@@ -2947,14 +2964,11 @@ void* CPU::GetDirectWriteMemoryPointer(VirtualMemoryAddress address, MemoryAcces
 
   const PhysicalMemoryAddress paddr = address & PHYSICAL_MEMORY_ADDRESS_MASK;
 
-#if 0
-  // Not enabled until we can protect code regions.
   if (paddr < RAM_MIRROR_END)
-    return &g_ram[paddr & RAM_MASK];
-#endif
+    return &g_ram[paddr & g_ram_mask];
 
-  if ((paddr & DCACHE_LOCATION_MASK) == DCACHE_LOCATION)
-    return &g_state.dcache[paddr & DCACHE_OFFSET_MASK];
+  if ((paddr & SCRATCHPAD_ADDR_MASK) == SCRATCHPAD_ADDR)
+    return &g_state.scratchpad[paddr & SCRATCHPAD_OFFSET_MASK];
 
   return nullptr;
 }
@@ -2989,6 +3003,8 @@ static void MemoryBreakpoint(MemoryAccessType type, MemoryAccessSize size, Virtu
   static constexpr const char* types[2] = { "read", "write" };
 
   const u32 cycle = TimingEvents::GetGlobalTickCounter() + CPU::g_state.pending_ticks;
+  if (cycle == 3301006373)
+    __debugbreak();
 
 #if 0
   static std::FILE* fp = nullptr;

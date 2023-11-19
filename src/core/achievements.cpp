@@ -7,6 +7,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include "achievements.h"
+#include "achievements_private.h"
 #include "bios.h"
 #include "bus.h"
 #include "cpu_core.h"
@@ -19,7 +20,6 @@
 #include "common/assert.h"
 #include "common/error.h"
 #include "common/file_system.h"
-#include "common/http_downloader.h"
 #include "common/log.h"
 #include "common/md5_digest.h"
 #include "common/path.h"
@@ -28,6 +28,7 @@
 #include "common/string_util.h"
 
 #include "util/cd_image.h"
+#include "util/http_downloader.h"
 #include "util/imgui_fullscreen.h"
 #include "util/imgui_manager.h"
 #include "util/platform_misc.h"
@@ -75,6 +76,12 @@ static constexpr float LEADERBOARD_FAILED_NOTIFICATION_TIME = 3.0f;
 
 static constexpr float INDICATOR_FADE_IN_TIME = 0.1f;
 static constexpr float INDICATOR_FADE_OUT_TIME = 0.5f;
+
+// Some API calls are really slow. Set a longer timeout.
+static constexpr float SERVER_CALL_TIMEOUT = 60.0f;
+
+// Chrome uses 10 server calls per domain, seems reasonable.
+static constexpr u32 MAX_CONCURRENT_SERVER_CALLS = 10;
 
 namespace {
 struct LoginWithPasswordParameters
@@ -129,8 +136,8 @@ static void BeginLoadGame();
 static void UpdateGameSummary();
 static void DownloadImage(std::string url, std::string cache_filename);
 
-static bool CreateClient(rc_client_t** client, std::unique_ptr<Common::HTTPDownloader>* http);
-static void DestroyClient(rc_client_t** client, std::unique_ptr<Common::HTTPDownloader>* http);
+static bool CreateClient(rc_client_t** client, std::unique_ptr<HTTPDownloader>* http);
+static void DestroyClient(rc_client_t** client, std::unique_ptr<HTTPDownloader>* http);
 static void ClientMessageCallback(const char* message, const rc_client_t* client);
 static uint32_t ClientReadMemory(uint32_t address, uint8_t* buffer, uint32_t num_bytes, rc_client_t* client);
 static void ClientServerCall(const rc_api_request_t* request, rc_client_server_callback_t callback, void* callback_data,
@@ -164,22 +171,18 @@ static void DisplayHardcoreDeferredMessage();
 static void DisplayAchievementSummary();
 static void UpdateRichPresence(std::unique_lock<std::recursive_mutex>& lock);
 
-static std::string GetAchievementBadgePath(const rc_client_achievement_t* achievement, int state);
-static std::string GetUserBadgePath(const std::string_view& username);
-static std::string GetLeaderboardUserBadgePath(const rc_client_leaderboard_entry_t* entry);
-
-static void DrawAchievement(const rc_client_achievement_t* cheevo);
-static void DrawLeaderboardListEntry(const rc_client_leaderboard_t* lboard);
-static void DrawLeaderboardEntry(const rc_client_leaderboard_entry_t& entry, bool is_self, float rank_column_width,
-                                 float name_column_width, float time_column_width, float column_spacing);
-static void OpenLeaderboard(const rc_client_leaderboard_t* lboard);
 static void LeaderboardFetchNearbyCallback(int result, const char* error_message,
                                            rc_client_leaderboard_entry_list_t* list, rc_client_t* client,
                                            void* callback_userdata);
 static void LeaderboardFetchAllCallback(int result, const char* error_message, rc_client_leaderboard_entry_list_t* list,
                                         rc_client_t* client, void* callback_userdata);
-static void FetchNextLeaderboardEntries();
-static void CloseLeaderboard();
+
+#ifndef __ANDROID__
+static void DrawAchievement(const rc_client_achievement_t* cheevo);
+static void DrawLeaderboardListEntry(const rc_client_leaderboard_t* lboard);
+static void DrawLeaderboardEntry(const rc_client_leaderboard_entry_t& entry, bool is_self, float rank_column_width,
+                                 float name_column_width, float time_column_width, float column_spacing);
+#endif
 
 static bool s_hardcore_mode = false;
 
@@ -190,7 +193,7 @@ static bool s_using_raintegration = false;
 static std::recursive_mutex s_achievements_mutex;
 static rc_client_t* s_client;
 static std::string s_image_directory;
-static std::unique_ptr<Common::HTTPDownloader> s_http_downloader;
+static std::unique_ptr<HTTPDownloader> s_http_downloader;
 
 static std::string s_game_path;
 static std::string s_game_hash;
@@ -226,6 +229,16 @@ static std::optional<AchievementProgressIndicator> s_active_progress_indicator;
 std::unique_lock<std::recursive_mutex> Achievements::GetLock()
 {
   return std::unique_lock(s_achievements_mutex);
+}
+
+rc_client_t* Achievements::GetClient()
+{
+  return s_client;
+}
+
+const rc_client_user_game_summary_t& Achievements::GetGameSummary()
+{
+  return s_game_summary;
 }
 
 std::string Achievements::GetUserAgent()
@@ -298,9 +311,8 @@ std::string Achievements::GetGameHash(CDImage* image)
 
 void Achievements::DownloadImage(std::string url, std::string cache_filename)
 {
-  auto callback = [cache_filename](s32 status_code, std::string content_type,
-                                   Common::HTTPDownloader::Request::Data data) {
-    if (status_code != Common::HTTPDownloader::HTTP_OK)
+  auto callback = [cache_filename](s32 status_code, std::string content_type, HTTPDownloader::Request::Data data) {
+    if (status_code != HTTPDownloader::HTTP_STATUS_OK)
       return;
 
     if (!FileSystem::WriteBinaryFile(cache_filename.c_str(), data.data(), data.size()))
@@ -369,6 +381,11 @@ const std::string& Achievements::GetGameTitle()
   return s_game_title;
 }
 
+const std::string& Achievements::GetGameIconPath()
+{
+  return s_game_icon;
+}
+
 const std::string& Achievements::GetRichPresenceString()
 {
   return s_rich_presence_string;
@@ -418,14 +435,17 @@ bool Achievements::Initialize()
   return true;
 }
 
-bool Achievements::CreateClient(rc_client_t** client, std::unique_ptr<Common::HTTPDownloader>* http)
+bool Achievements::CreateClient(rc_client_t** client, std::unique_ptr<HTTPDownloader>* http)
 {
-  *http = Common::HTTPDownloader::Create(GetUserAgent().c_str());
+  *http = HTTPDownloader::Create(GetUserAgent().c_str());
   if (!*http)
   {
     Host::ReportErrorAsync("Achievements Error", "Failed to create HTTPDownloader, cannot use achievements");
     return false;
   }
+
+  (*http)->SetTimeout(SERVER_CALL_TIMEOUT);
+  (*http)->SetMaxActiveRequests(MAX_CONCURRENT_SERVER_CALLS);
 
   rc_client_t* new_client = rc_client_create(ClientReadMemory, ClientServerCall);
   if (!new_client)
@@ -447,7 +467,7 @@ bool Achievements::CreateClient(rc_client_t** client, std::unique_ptr<Common::HT
   return true;
 }
 
-void Achievements::DestroyClient(rc_client_t** client, std::unique_ptr<Common::HTTPDownloader>* http)
+void Achievements::DestroyClient(rc_client_t** client, std::unique_ptr<HTTPDownloader>* http)
 {
   (*http)->WaitForAllRequests();
 
@@ -601,17 +621,20 @@ uint32_t Achievements::ClientReadMemory(uint32_t address, uint8_t* buffer, uint3
 void Achievements::ClientServerCall(const rc_api_request_t* request, rc_client_server_callback_t callback,
                                     void* callback_data, rc_client_t* client)
 {
-  Common::HTTPDownloader::Request::Callback hd_callback =
-    [callback, callback_data](s32 status_code, std::string content_type, Common::HTTPDownloader::Request::Data data) {
-      rc_api_server_response_t rr;
-      rr.http_status_code = status_code;
-      rr.body_length = data.size();
-      rr.body = reinterpret_cast<const char*>(data.data());
+  HTTPDownloader::Request::Callback hd_callback = [callback, callback_data](s32 status_code, std::string content_type,
+                                                                            HTTPDownloader::Request::Data data) {
+    rc_api_server_response_t rr;
+    rr.http_status_code = (status_code <= 0) ? (status_code == HTTPDownloader::HTTP_STATUS_CANCELLED ?
+                                                  RC_API_SERVER_RESPONSE_CLIENT_ERROR :
+                                                  RC_API_SERVER_RESPONSE_RETRYABLE_CLIENT_ERROR) :
+                                               status_code;
+    rr.body_length = data.size();
+    rr.body = reinterpret_cast<const char*>(data.data());
 
-      callback(&rr, callback_data);
-    };
+    callback(&rr, callback_data);
+  };
 
-  Common::HTTPDownloader* http = static_cast<Common::HTTPDownloader*>(rc_client_get_userdata(client));
+  HTTPDownloader* http = static_cast<HTTPDownloader*>(rc_client_get_userdata(client));
 
   // TODO: Content-type for post
   if (request->post_data)
@@ -640,6 +663,15 @@ void Achievements::IdleUpdate()
 
   s_http_downloader->PollRequests();
   rc_client_idle(s_client);
+}
+
+bool Achievements::NeedsIdleUpdate()
+{
+  if (!IsActive())
+    return false;
+
+  const auto lock = GetLock();
+  return (s_http_downloader && s_http_downloader->HasAnyRequests());
 }
 
 void Achievements::FrameUpdate()
@@ -980,9 +1012,10 @@ void Achievements::DisplayAchievementSummary()
     std::string summary;
     if (s_game_summary.num_core_achievements > 0)
     {
-      summary = fmt::format(TRANSLATE_FS("Achievements", "You have unlocked {} of {} achievements, and earned {} of {} points."),
-                            s_game_summary.num_unlocked_achievements, s_game_summary.num_core_achievements,
-                            s_game_summary.points_unlocked, s_game_summary.points_core);
+      summary = fmt::format(
+        TRANSLATE_FS("Achievements", "You have unlocked {} of {} achievements, and earned {} of {} points."),
+        s_game_summary.num_unlocked_achievements, s_game_summary.num_core_achievements, s_game_summary.points_unlocked,
+        s_game_summary.points_core);
     }
     else
     {
@@ -1507,7 +1540,8 @@ bool Achievements::DoState(StateWrapper& sw)
   }
 }
 
-std::string Achievements::GetAchievementBadgePath(const rc_client_achievement_t* achievement, int state)
+std::string Achievements::GetAchievementBadgePath(const rc_client_achievement_t* achievement, int state,
+                                                  bool download_if_missing)
 {
   static constexpr std::array<const char*, NUM_RC_CLIENT_ACHIEVEMENT_STATES> s_achievement_state_strings = {
     {"inactive", "active", "unlocked", "disabled"}};
@@ -1520,7 +1554,7 @@ std::string Achievements::GetAchievementBadgePath(const rc_client_achievement_t*
   path = Path::Combine(s_image_directory, TinyString::from_fmt("achievement_{}_{}_{}.png", s_game_id, achievement->id,
                                                                s_achievement_state_strings[state]));
 
-  if (!FileSystem::FileExists(path.c_str()))
+  if (download_if_missing && !FileSystem::FileExists(path.c_str()))
   {
     char buf[512];
     const int res = rc_client_achievement_get_image_url(achievement, state, buf, std::size(buf));
@@ -1572,9 +1606,9 @@ bool Achievements::Login(const char* username, const char* password, Error* erro
 
   // We need to use a temporary client if achievements aren't currently active.
   rc_client_t* client = s_client;
-  Common::HTTPDownloader* http = s_http_downloader.get();
+  HTTPDownloader* http = s_http_downloader.get();
   const bool is_temporary_client = (client == nullptr);
-  std::unique_ptr<Common::HTTPDownloader> temporary_downloader;
+  std::unique_ptr<HTTPDownloader> temporary_downloader;
   ScopedGuard temporary_client_guard = [&client, is_temporary_client, &temporary_downloader]() {
     if (is_temporary_client)
       DestroyClient(&client, &temporary_downloader);
@@ -1767,12 +1801,15 @@ bool Achievements::ConfirmHardcoreModeDisable(const char* trigger)
 
 void Achievements::ClearUIState()
 {
+#ifndef __ANDROID__
   if (FullscreenUI::IsAchievementsWindowOpen() || FullscreenUI::IsLeaderboardsWindowOpen())
     FullscreenUI::ReturnToPreviousWindow();
 
+  CloseLeaderboard();
+#endif
+
   s_achievement_badge_paths = {};
 
-  CloseLeaderboard();
   s_leaderboard_user_icon_paths = {};
   s_leaderboard_entry_lists = {};
   if (s_leaderboard_list)
@@ -1920,6 +1957,8 @@ void Achievements::DrawGameOverlays()
     position.y -= image_size.y + padding;
   }
 }
+
+#ifndef __ANDROID__
 
 void Achievements::DrawPauseMenuOverlays()
 {
@@ -2767,6 +2806,8 @@ void Achievements::DrawLeaderboardListEntry(const rc_client_leaderboard_t* lboar
     OpenLeaderboard(lboard);
 }
 
+#endif // __ANDROID__
+
 void Achievements::OpenLeaderboard(const rc_client_leaderboard_t* lboard)
 {
   Log_DevPrintf("Opening leaderboard '%s' (%u)", lboard->title, lboard->id);
@@ -2777,6 +2818,36 @@ void Achievements::OpenLeaderboard(const rc_client_leaderboard_t* lboard)
   s_is_showing_all_leaderboard_entries = false;
   s_leaderboard_fetch_handle = rc_client_begin_fetch_leaderboard_entries_around_user(
     s_client, lboard->id, LEADERBOARD_NEARBY_ENTRIES_TO_FETCH, LeaderboardFetchNearbyCallback, nullptr);
+}
+
+bool Achievements::OpenLeaderboardById(u32 leaderboard_id)
+{
+  const rc_client_leaderboard_t* lb = rc_client_get_leaderboard_info(s_client, leaderboard_id);
+  if (!lb)
+    return false;
+
+  OpenLeaderboard(lb);
+  return true;
+}
+
+u32 Achievements::GetOpenLeaderboardId()
+{
+  return s_open_leaderboard ? s_open_leaderboard->id : 0;
+}
+
+bool Achievements::IsShowingAllLeaderboardEntries()
+{
+  return s_is_showing_all_leaderboard_entries;
+}
+
+const std::vector<rc_client_leaderboard_entry_list_t*>& Achievements::GetLeaderboardEntryLists()
+{
+  return s_leaderboard_entry_lists;
+}
+
+const rc_client_leaderboard_entry_list_t* Achievements::GetLeaderboardNearbyEntries()
+{
+  return s_leaderboard_nearby_entries;
 }
 
 void Achievements::LeaderboardFetchNearbyCallback(int result, const char* error_message,
@@ -3009,7 +3080,7 @@ unsigned int Achievements::RAIntegration::RACallbackReadMemoryBlock(unsigned int
     return 0;
 
   const u32 copy_size = std::min<u32>(Bus::g_ram_size - nAddress, nBytes);
-  std::memcpy(pBuffer, Bus::g_ram + nAddress, copy_size);
+  std::memcpy(pBuffer, Bus::g_unprotected_ram + nAddress, copy_size);
   return copy_size;
 }
 

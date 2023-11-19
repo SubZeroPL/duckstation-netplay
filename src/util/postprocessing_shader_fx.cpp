@@ -6,6 +6,7 @@
 #include "shadergen.h"
 
 // TODO: Remove me
+#include "core/host.h"
 #include "core/settings.h"
 
 #include "common/assert.h"
@@ -328,6 +329,7 @@ bool PostProcessing::ReShadeFXShader::CreateModule(s32 buffer_width, s32 buffer_
   pp.add_macro_definition("BUFFER_HEIGHT", std::to_string(buffer_height));
   pp.add_macro_definition("BUFFER_RCP_WIDTH", std::to_string(1.0f / static_cast<float>(buffer_width)));
   pp.add_macro_definition("BUFFER_RCP_HEIGHT", std::to_string(1.0f / static_cast<float>(buffer_height)));
+  pp.add_macro_definition("BUFFER_COLOR_BIT_DEPTH", "32");
 
   switch (GetRenderAPI())
   {
@@ -682,6 +684,19 @@ bool PostProcessing::ReShadeFXShader::GetSourceOption(const reshadefx::uniform_i
       *si = SourceOptionType::MousePoint;
       return true;
     }
+    else if (source == "random")
+    {
+      if ((!ui.type.is_floating_point() && !ui.type.is_integral()) || ui.type.components() != 1)
+      {
+        Error::SetString(error, fmt::format("Unexpected type '{}' ({} components) for random source in uniform '{}'",
+                                            ui.type.description(), ui.type.components(), ui.name));
+        return false;
+      }
+
+      // TODO: This is missing min/max handling.
+      *si = (ui.type.base == reshadefx::type::t_float) ? SourceOptionType::RandomF : SourceOptionType::Random;
+      return true;
+    }
     else if (source == "overlay_active" || source == "has_depth")
     {
       *si = SourceOptionType::Zero;
@@ -775,13 +790,19 @@ bool PostProcessing::ReShadeFXShader::CreatePasses(GPUTexture::Format backbuffer
         return false;
       }
 
-      const std::string image_path =
-        Path::Combine(EmuFolders::Shaders, Path::Combine("reshade" FS_OSPATH_SEPARATOR_STR "Textures", source));
       Common::RGBA8Image image;
-      if (!image.LoadFromFile(image_path.c_str()))
+      if (const std::string image_path =
+            Path::Combine(EmuFolders::Shaders, Path::Combine("reshade" FS_OSPATH_SEPARATOR_STR "Textures", source));
+          !image.LoadFromFile(image_path.c_str()))
       {
-        Error::SetString(error, fmt::format("Failed to load image '{}' (from '{}')", source, image_path).c_str());
-        return false;
+        // Might be a base file/resource instead.
+        const std::string resource_name = Path::Combine("shaders/reshade/Textures", source);
+        if (std::optional<std::vector<u8>> resdata = Host::ReadResourceFile(resource_name.c_str());
+            !resdata.has_value() || !image.LoadFromBuffer(resource_name.c_str(), resdata->data(), resdata->size()))
+        {
+          Error::SetString(error, fmt::format("Failed to load image '{}' (from '{}')", source, image_path).c_str());
+          return false;
+        }
       }
 
       tex.rt_scale = 0.0f;
@@ -1234,6 +1255,19 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUFramebuffer* f
         }
         break;
 
+        case SourceOptionType::Random:
+        {
+          const s32 rv = m_random() % 32767; // reshade uses rand(), which on some platforms has a 0x7fff maximum.
+          std::memcpy(dst, &rv, sizeof(rv));
+        }
+        break;
+        case SourceOptionType::RandomF:
+        {
+          const float rv = (m_random() - m_random.min()) / static_cast<float>(m_random.max() - m_random.min());
+          std::memcpy(dst, &rv, sizeof(rv));
+        }
+        break;
+
         case SourceOptionType::BufferWidth:
         case SourceOptionType::BufferHeight:
         {
@@ -1281,10 +1315,23 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUFramebuffer* f
   for (const Pass& pass : m_passes)
   {
     GL_SCOPE_FMT("Draw pass {}", pass.name.c_str());
-
     GL_INS_FMT("Render Target: ID {} [{}]", pass.render_target, GetTextureNameForID(pass.render_target));
     GPUFramebuffer* output_fb = GetFramebufferByID(pass.render_target, input, final_target);
-    g_gpu_device->SetFramebuffer(output_fb);
+
+    if (!output_fb)
+    {
+      // Drawing to final buffer.
+      if (!g_gpu_device->BeginPresent(false))
+      {
+        GL_POP();
+        return false;
+      }
+    }
+    else
+    {
+      g_gpu_device->SetFramebuffer(output_fb);
+    }
+
     g_gpu_device->SetPipeline(pass.pipeline.get());
 
     // Set all inputs first, before the render pass starts.
@@ -1292,7 +1339,7 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUFramebuffer* f
     for (const Sampler& sampler : pass.samplers)
     {
       GL_INS_FMT("Texture Sampler {}: ID {} [{}]", sampler.slot, sampler.texture_id,
-             GetTextureNameForID(sampler.texture_id));
+                 GetTextureNameForID(sampler.texture_id));
       g_gpu_device->SetTextureSampler(sampler.slot, GetTextureByID(sampler.texture_id, input, final_target),
                                       sampler.sampler);
       bound_textures[sampler.slot] = true;
@@ -1304,16 +1351,6 @@ bool PostProcessing::ReShadeFXShader::Apply(GPUTexture* input, GPUFramebuffer* f
     {
       if (!bound_textures[i])
         g_gpu_device->SetTextureSampler(i, nullptr, nullptr);
-    }
-
-    if (!output_fb)
-    {
-      // Drawing to final buffer.
-      if (!g_gpu_device->BeginPresent(false))
-      {
-        GL_POP();
-        return false;
-      }
     }
 
     g_gpu_device->Draw(pass.num_vertices, 0);

@@ -42,8 +42,6 @@ struct VK_PIPELINE_CACHE_HEADER
 // Tweakables
 enum : u32
 {
-  MIN_TEXEL_BUFFER_ELEMENTS = 1024 * 512,
-
   MAX_DRAW_CALLS_PER_FRAME = 2048,
   MAX_COMBINED_IMAGE_SAMPLER_DESCRIPTORS_PER_FRAME = GPUDevice::MAX_TEXTURE_SAMPLERS * MAX_DRAW_CALLS_PER_FRAME,
   MAX_DESCRIPTOR_SETS_PER_FRAME = MAX_DRAW_CALLS_PER_FRAME,
@@ -222,6 +220,10 @@ bool VulkanDevice::SelectInstanceExtensions(ExtensionList* extension_list, const
   if (wi.type == WindowInfo::Type::MacOS && !SupportsExtension(VK_EXT_METAL_SURFACE_EXTENSION_NAME, true))
     return false;
 #endif
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+  if (wi.type == WindowInfo::Type::Android && !SupportsExtension(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME, true))
+    return false;
+#endif
 
   // VK_EXT_debug_utils
   if (enable_debug_utils && !SupportsExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, false))
@@ -249,8 +251,8 @@ VulkanDevice::GPUList VulkanDevice::EnumerateGPUs(VkInstance instance)
   res = vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices.data());
   if (res == VK_INCOMPLETE)
   {
-    Log_WarningPrintf("First vkEnumeratePhysicalDevices() call returned %zu devices, but second returned %u",
-                      physical_devices.size(), gpu_count);
+    Log_WarningFmt("First vkEnumeratePhysicalDevices() call returned {} devices, but second returned {}",
+                   physical_devices.size(), gpu_count);
   }
   else if (res != VK_SUCCESS)
   {
@@ -267,6 +269,16 @@ VulkanDevice::GPUList VulkanDevice::EnumerateGPUs(VkInstance instance)
   {
     VkPhysicalDeviceProperties props = {};
     vkGetPhysicalDeviceProperties(device, &props);
+
+    // Skip GPUs which don't support Vulkan 1.1, since we won't be able to create a device with them anyway.
+    if (VK_API_VERSION_VARIANT(props.apiVersion) == 0 && VK_API_VERSION_MAJOR(props.apiVersion) <= 1 &&
+        VK_API_VERSION_MINOR(props.apiVersion) < 1)
+    {
+      Log_WarningFmt("Ignoring Vulkan GPU '{}' because it only claims support for Vulkan {}.{}.{}", props.deviceName,
+                     VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion),
+                     VK_API_VERSION_PATCH(props.apiVersion));
+      continue;
+    }
 
     std::string gpu_name = props.deviceName;
 

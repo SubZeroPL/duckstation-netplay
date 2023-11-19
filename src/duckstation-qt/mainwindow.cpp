@@ -17,7 +17,7 @@
 #include "netplaydialogs.h"
 #include "qthost.h"
 #include "qtutils.h"
-#include "settingsdialog.h"
+#include "settingswindow.h"
 #include "settingwidgetbinder.h"
 
 #include "core/achievements.h"
@@ -132,6 +132,7 @@ MainWindow::~MainWindow()
   Assert(!m_display_widget);
   Assert(!m_debugger_window);
   cancelGameListRefresh();
+  destroySubWindows();
 
   // we compare here, since recreate destroys the window later
   if (g_main_window == this)
@@ -737,12 +738,35 @@ void MainWindow::recreate()
   g_main_window = nullptr;
 
   MainWindow* new_main_window = new MainWindow();
-  new_main_window->initialize();
   new_main_window->show();
   deleteLater();
 
   // Reload the sources we just closed.
   g_emu_thread->reloadInputSources();
+}
+
+void MainWindow::destroySubWindows()
+{
+  if (m_debugger_window)
+  {
+    m_debugger_window->close();
+    m_debugger_window->deleteLater();
+    m_debugger_window = nullptr;
+  }
+
+  if (m_controller_settings_window)
+  {
+    m_controller_settings_window->close();
+    m_controller_settings_window->deleteLater();
+    m_controller_settings_window = nullptr;
+  }
+
+  if (m_settings_window)
+  {
+    m_settings_window->close();
+    m_settings_window->deleteLater();
+    m_settings_window = nullptr;
+  }
 }
 
 void MainWindow::populateGameListContextMenu(const GameList::Entry* entry, QWidget* parent_window, QMenu* menu)
@@ -1284,7 +1308,7 @@ void MainWindow::onViewGamePropertiesActionTriggered()
   if (path.empty() || serial.empty())
     return;
 
-  SettingsDialog::openGamePropertiesDialog(path, serial, System::GetDiscRegion());
+  SettingsWindow::openGamePropertiesDialog(path, serial, System::GetDiscRegion());
 }
 
 void MainWindow::onGitHubRepositoryActionTriggered()
@@ -1294,12 +1318,12 @@ void MainWindow::onGitHubRepositoryActionTriggered()
 
 void MainWindow::onIssueTrackerActionTriggered()
 {
-  QtUtils::OpenURL(this, "https://github.com/stenzek/duckstation/issues");
+  QtUtils::OpenURL(this, "https://www.duckstation.org/issues.html");
 }
 
 void MainWindow::onDiscordServerActionTriggered()
 {
-  QtUtils::OpenURL(this, "https://discord.gg/Buktv3t");
+  QtUtils::OpenURL(this, "https://www.duckstation.org/discord.html");
 }
 
 void MainWindow::onAboutActionTriggered()
@@ -1350,9 +1374,6 @@ void MainWindow::onGameListEntryActivated()
     return;
   }
 
-  // we might still be saving a resume state...
-  // System::WaitForSaveStateFlush();
-
   std::optional<std::string> save_path;
   if (!entry->serial.empty())
   {
@@ -1383,7 +1404,7 @@ void MainWindow::onGameListEntryContextMenuRequested(const QPoint& point)
   {
     QAction* action = menu.addAction(tr("Properties..."));
     connect(action, &QAction::triggered,
-            [entry]() { SettingsDialog::openGamePropertiesDialog(entry->path, entry->serial, entry->region); });
+            [entry]() { SettingsWindow::openGamePropertiesDialog(entry->path, entry->serial, entry->region); });
 
     connect(menu.addAction(tr("Open Containing Directory...")), &QAction::triggered, [this, entry]() {
       const QFileInfo fi(QString::fromStdString(entry->path));
@@ -1973,9 +1994,9 @@ void MainWindow::connectSignals()
   connect(m_ui.actionEmulationSettings, &QAction::triggered, [this]() { doSettings("Emulation"); });
   connect(m_ui.actionGameListSettings, &QAction::triggered, [this]() { doSettings("Game List"); });
   connect(m_ui.actionHotkeySettings, &QAction::triggered,
-          [this]() { doControllerSettings(ControllerSettingsDialog::Category::HotkeySettings); });
+          [this]() { doControllerSettings(ControllerSettingsWindow::Category::HotkeySettings); });
   connect(m_ui.actionControllerSettings, &QAction::triggered,
-          [this]() { doControllerSettings(ControllerSettingsDialog::Category::GlobalSettings); });
+          [this]() { doControllerSettings(ControllerSettingsWindow::Category::GlobalSettings); });
   connect(m_ui.actionMemoryCardSettings, &QAction::triggered, [this]() { doSettings("Memory Cards"); });
   connect(m_ui.actionDisplaySettings, &QAction::triggered, [this]() { doSettings("Display"); });
   connect(m_ui.actionEnhancementSettings, &QAction::triggered, [this]() { doSettings("Enhancements"); });
@@ -1994,6 +2015,8 @@ void MainWindow::connectSignals()
   connect(m_ui.actionGitHubRepository, &QAction::triggered, this, &MainWindow::onGitHubRepositoryActionTriggered);
   connect(m_ui.actionIssueTracker, &QAction::triggered, this, &MainWindow::onIssueTrackerActionTriggered);
   connect(m_ui.actionDiscordServer, &QAction::triggered, this, &MainWindow::onDiscordServerActionTriggered);
+  connect(m_ui.actionViewThirdPartyNotices, &QAction::triggered, this,
+          [this]() { AboutDialog::showThirdPartyNotices(this); });
   connect(m_ui.actionAboutQt, &QAction::triggered, qApp, &QApplication::aboutQt);
   connect(m_ui.actionAbout, &QAction::triggered, this, &MainWindow::onAboutActionTriggered);
   connect(m_ui.actionCheckForUpdates, &QAction::triggered, this, &MainWindow::onCheckForUpdatesActionTriggered);
@@ -2246,20 +2269,28 @@ void MainWindow::setIconThemeFromSettings()
   QIcon::setThemeName(dark ? QStringLiteral("white") : QStringLiteral("black"));
 }
 
-void MainWindow::onSettingsResetToDefault()
+void MainWindow::onSettingsResetToDefault(bool system, bool controller)
 {
-  if (m_settings_dialog)
+  if (system && m_settings_window)
   {
-    const bool shown = m_settings_dialog->isVisible();
+    const bool had_settings_window = m_settings_window->isVisible();
+    m_settings_window->close();
+    m_settings_window->deleteLater();
+    m_settings_window = nullptr;
 
-    m_settings_dialog->hide();
-    m_settings_dialog->deleteLater();
-    m_settings_dialog = new SettingsDialog(this);
-    if (shown)
-    {
-      m_settings_dialog->setModal(false);
-      m_settings_dialog->show();
-    }
+    if (had_settings_window)
+      doSettings();
+  }
+
+  if (controller && m_controller_settings_window)
+  {
+    const bool had_controller_settings_window = m_controller_settings_window->isVisible();
+    m_controller_settings_window->close();
+    m_controller_settings_window->deleteLater();
+    m_controller_settings_window = nullptr;
+
+    if (had_controller_settings_window)
+      doControllerSettings(ControllerSettingsWindow::Category::GlobalSettings);
   }
 
   updateDebugMenuCPUExecutionMode();
@@ -2312,47 +2343,49 @@ void MainWindow::restoreDisplayWindowGeometryFromConfig()
     container->resize(640, 480);
 }
 
-SettingsDialog* MainWindow::getSettingsDialog()
+SettingsWindow* MainWindow::getSettingsDialog()
 {
-  if (!m_settings_dialog)
-    m_settings_dialog = new SettingsDialog(this);
+  if (!m_settings_window)
+    m_settings_window = new SettingsWindow();
 
-  return m_settings_dialog;
+  return m_settings_window;
 }
 
 void MainWindow::doSettings(const char* category /* = nullptr */)
 {
-  SettingsDialog* dlg = getSettingsDialog();
+  SettingsWindow* dlg = getSettingsDialog();
   if (!dlg->isVisible())
   {
-    dlg->setModal(false);
     dlg->show();
+  }
+  else
+  {
+    dlg->raise();
+    dlg->setFocus();
   }
 
   if (category)
     dlg->setCategory(category);
 }
 
-ControllerSettingsDialog* MainWindow::getControllerSettingsDialog()
-{
-  if (!m_controller_settings_dialog)
-    m_controller_settings_dialog = new ControllerSettingsDialog(this);
-
-  return m_controller_settings_dialog;
-}
-
 void MainWindow::doControllerSettings(
-  ControllerSettingsDialog::Category category /*= ControllerSettingsDialog::Category::Count*/)
+  ControllerSettingsWindow::Category category /*= ControllerSettingsDialog::Category::Count*/)
 {
-  ControllerSettingsDialog* dlg = getControllerSettingsDialog();
-  if (!dlg->isVisible())
+  if (!m_controller_settings_window)
+    m_controller_settings_window = new ControllerSettingsWindow();
+
+  if (!m_controller_settings_window->isVisible())
   {
-    dlg->setModal(false);
-    dlg->show();
+    m_controller_settings_window->show();
+  }
+  else
+  {
+    m_controller_settings_window->raise();
+    m_controller_settings_window->setFocus();
   }
 
-  if (category != ControllerSettingsDialog::Category::Count)
-    dlg->setCategory(category);
+  if (category != ControllerSettingsWindow::Category::Count)
+    m_controller_settings_window->setCategory(category);
 }
 
 void MainWindow::updateDebugMenuCPUExecutionMode()
@@ -2445,6 +2478,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
   {
     saveGeometryToConfig();
     g_emu_thread->stopFullscreenUI();
+    destroySubWindows();
     QMainWindow::closeEvent(event);
     return;
   }
@@ -2635,12 +2669,6 @@ void MainWindow::requestExit(bool allow_confirm /* = true */)
 
 void MainWindow::checkForSettingChanges()
 {
-#if 0
-  // FIXME: Triggers incorrectly
-  if (m_display_widget)
-    m_display_widget->updateRelativeMode(s_system_valid && !s_system_paused);
-#endif
-
   LogWindow::updateSettings();
   updateWindowState();
 }
