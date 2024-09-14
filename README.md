@@ -1,3 +1,5 @@
+# THIS IS A MODIFIED VERSION OF THE DUCKSTATION EMULATOR DO NOT EXPECT ANY SUPPORT FROM ANYONE 
+
 # DuckStation - PlayStation 1, aka. PSX Emulator
 [Latest News](#latest-news) | [Features](#features) | [Screenshots](#screenshots) | [Downloading and Running](#downloading-and-running) | [Building](#building) | [Disclaimers](#disclaimers)
 
